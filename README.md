@@ -20,7 +20,7 @@ The biggest challenge in building a federated GPU commons is **trust**. Organiza
 - avoid exposing internal systems, and
 - can reclaim resources at any time.
 
-This project builds the **secure provider node** that allows a machine to safely participate in the federation. [Project 7b (Group 16)](#relationship-to-project-7b-coordinator) builds the **coordinator** that manages these nodes.
+This project builds the **secure provider node** that will allow a machine to safely participate in the federation. [Project 7b (Group 16)](#relationship-to-project-7b-coordinator) builds the **coordinator** that manages these nodes.
 
 ## Description
 
@@ -66,7 +66,7 @@ The MVP focuses on **curated inference workloads only**. The following are out o
 
 ## Outcome
 
-A deployable prototype of a secure compute node that demonstrates provider-controlled participation in a GPU commons. The design should be suitable for future adoption by organizations such as U of T labs, nonprofits, and research groups contributing underused GPUs.
+A deployable prototype of a secure compute node that demonstrates provider-controlled participation in a GPU commons. The design should be suitable for future adoption by organizations such as UofT labs, nonprofits, and research groups contributing underused GPUs.
 
 ## Deliverables
 
