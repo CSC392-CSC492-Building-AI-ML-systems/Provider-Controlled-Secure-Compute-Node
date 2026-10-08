@@ -15,6 +15,8 @@ import (
 // P16 talks to Project 16's coordinator. Wire format and status-code meanings
 // follow docs/coordinator-requirements.md; P16's lease endpoints exist only in
 // their harness client so far, so field names there are their planned ones.
+var _ Client = (*P16)(nil)
+
 type P16 struct {
 	BaseURL    string
 	ProviderID string
