@@ -1,0 +1,243 @@
+DH2020PC08
+
+nvidia-smi:
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.178.04             Driver Version: 580.178.04     CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA GeForce RTX 4080        Off |   00000000:01:00.0 Off |                  N/A |
+| 30%   32C    P2             33W /  320W |    1434MiB /  16376MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|    0   N/A  N/A          286666      C   ...ntime-20261005/env/bin/python        996MiB |
+|    0   N/A  N/A          334690      G   /usr/lib/xorg/Xorg                       57MiB |
+|    0   N/A  N/A          343345      G   /usr/lib/xorg/Xorg                       47MiB |
+|    0   N/A  N/A          347071      G   gnome-control-center                      4MiB |
+|    0   N/A  N/A          399772      G   /usr/lib/xorg/Xorg                       86MiB |
+|    0   N/A  N/A          399972      G   /usr/bin/gnome-shell                     11MiB |
+|    0   N/A  N/A          400755      G   ...rack-uuid=3190708988185955192         15MiB |
++-----------------------------------------------------------------------------------------+
+
+nvidia-smi -l
+Wed Oct  7 22:53:15 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.178.04             Driver Version: 580.178.04     CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA GeForce RTX 4080        Off |   00000000:01:00.0 Off |                  N/A |
+| 30%   32C    P2             34W /  320W |    1434MiB /  16376MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|    0   N/A  N/A          286666      C   ...ntime-20261005/env/bin/python        996MiB |
+|    0   N/A  N/A          334690      G   /usr/lib/xorg/Xorg                       57MiB |
+|    0   N/A  N/A          343345      G   /usr/lib/xorg/Xorg                       47MiB |
+|    0   N/A  N/A          347071      G   gnome-control-center                      4MiB |
+|    0   N/A  N/A          399772      G   /usr/lib/xorg/Xorg                       86MiB |
+|    0   N/A  N/A          399972      G   /usr/bin/gnome-shell                     11MiB |
+|    0   N/A  N/A          400755      G   ...rack-uuid=3190708988185955192         15MiB |
++-----------------------------------------------------------------------------------------+
+Wed Oct  7 22:53:20 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.178.04             Driver Version: 580.178.04     CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA GeForce RTX 4080        Off |   00000000:01:00.0 Off |                  N/A |
+| 30%   32C    P2             34W /  320W |    1434MiB /  16376MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|    0   N/A  N/A          286666      C   ...ntime-20261005/env/bin/python        996MiB |
+|    0   N/A  N/A          334690      G   /usr/lib/xorg/Xorg                       57MiB |
+|    0   N/A  N/A          343345      G   /usr/lib/xorg/Xorg                       47MiB |
+|    0   N/A  N/A          347071      G   gnome-control-center                      4MiB |
+|    0   N/A  N/A          399772      G   /usr/lib/xorg/Xorg                       86MiB |
+|    0   N/A  N/A          399972      G   /usr/bin/gnome-shell                     11MiB |
+|    0   N/A  N/A          400755      G   ...rack-uuid=3190708988185955192         15MiB |
++-----------------------------------------------------------------------------------------+
+Wed Oct  7 22:53:25 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.178.04             Driver Version: 580.178.04     CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA GeForce RTX 4080        Off |   00000000:01:00.0 Off |                  N/A |
+| 30%   32C    P2             34W /  320W |    1434MiB /  16376MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|    0   N/A  N/A          286666      C   ...ntime-20261005/env/bin/python        996MiB |
+|    0   N/A  N/A          334690      G   /usr/lib/xorg/Xorg                       57MiB |
+|    0   N/A  N/A          343345      G   /usr/lib/xorg/Xorg                       47MiB |
+|    0   N/A  N/A          347071      G   gnome-control-center                      4MiB |
+|    0   N/A  N/A          399772      G   /usr/lib/xorg/Xorg                       86MiB |
+|    0   N/A  N/A          399972      G   /usr/bin/gnome-shell                     11MiB |
+|    0   N/A  N/A          400755      G   ...rack-uuid=3190708988185955192         15MiB |
++-----------------------------------------------------------------------------------------+
+
+nvidia-smi --query-gpu=index,uuid,name,memory.total,memory.used,memory.free,driver_version,pci.bus_id,compute_cap,mig.mode.current --format=csv,noheader,nounits:
+0, GPU-10e8c909-f206-6e1c-ed6f-c1311a4af300, NVIDIA GeForce RTX 4080, 16376, 1434, 14502, 580.178.04, 00000000:01:00.0, 8.9, [N/A]
+
+ldconfig -p | grep libnvidia-ml: Yes
+libnvidia-ml.so.1 (libc6,x86-64) => /lib/x86_64-linux-gnu/libnvidia-ml.so.1
+libnvidia-ml.so (libc6,x86-64) => /lib/x86_64-linux-gnu/libnvidia-ml.so
+
+nvidia-smi mig -lgip: No MIG-supported devices found.
+
+Podman not found - Ask Andrew Wang to install (?)
+
+lscpu; nproc; free -h; cat /etc/os-release; uname -r:
+Architecture:                x86_64
+  CPU op-mode(s):            32-bit, 64-bit
+  Address sizes:             46 bits physical, 48 bits virtual
+  Byte Order:                Little Endian
+CPU(s):                      24
+  On-line CPU(s) list:       0-23
+Vendor ID:                   GenuineIntel
+  Model name:                13th Gen Intel(R) Core(TM) i7-13700
+    CPU family:              6
+    Model:                   183
+    Thread(s) per core:      2
+    Core(s) per socket:      16
+    Socket(s):               1
+    Stepping:                1
+    CPU max MHz:             5200.0000
+    CPU min MHz:             800.0000
+    BogoMIPS:                4224.00
+    Flags:                   fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush dts acpi mmx fxsr sse sse2 ss ht tm pbe syscall nx pdpe1gb rdtscp lm constant_tsc art arch_p
+                             erfmon pebs bts rep_good nopl xtopology nonstop_tsc cpuid aperfmperf tsc_known_freq pni pclmulqdq dtes64 monitor ds_cpl vmx smx est tm2 ssse3 sdbg fma cx16 xtpr pdcm pcid s
+                             se4_1 sse4_2 x2apic movbe popcnt tsc_deadline_timer aes xsave avx f16c rdrand lahf_lm abm 3dnowprefetch cpuid_fault epb ssbd ibrs ibpb stibp ibrs_enhanced tpr_shadow flexpr
+                             iority ept vpid ept_ad fsgsbase tsc_adjust bmi1 avx2 smep bmi2 erms invpcid rdseed adx smap clflushopt clwb intel_pt sha_ni xsaveopt xsavec xgetbv1 xsaves split_lock_detect
+                              user_shstk avx_vnni dtherm ida arat pln pts hwp hwp_notify hwp_act_window hwp_epp hwp_pkg_req hfi vnmi umip pku ospke waitpkg gfni vaes vpclmulqdq tme rdpid movdiri movdir
+                             64b fsrm md_clear serialize pconfig arch_lbr ibt flush_l1d arch_capabilities ibpb_exit_to_user
+Virtualization features:     
+  Virtualization:            VT-x
+Caches (sum of all):         
+  L1d:                       640 KiB (16 instances)
+  L1i:                       768 KiB (16 instances)
+  L2:                        24 MiB (10 instances)
+  L3:                        30 MiB (1 instance)
+NUMA:                        
+  NUMA node(s):              1
+  NUMA node0 CPU(s):         0-23
+Vulnerabilities:             
+  Gather data sampling:      Not affected
+  Indirect target selection: Not affected
+  Itlb multihit:             Not affected
+  L1tf:                      Not affected
+  Mds:                       Not affected
+  Meltdown:                  Not affected
+  Mmio stale data:           Not affected
+  Reg file data sampling:    Mitigation; Clear Register File
+  Retbleed:                  Not affected
+  Spec rstack overflow:      Not affected
+  Spec store bypass:         Mitigation; Speculative Store Bypass disabled via prctl
+  Spectre v1:                Mitigation; usercopy/swapgs barriers and __user pointer sanitization
+  Spectre v2:                Mitigation; Enhanced / Automatic IBRS; IBPB conditional; PBRSB-eIBRS SW sequence; BHI BHI_DIS_S
+  Srbds:                     Not affected
+  Tsa:                       Not affected
+  Tsx async abort:           Not affected
+  Vmscape:                   Mitigation; IBPB before exit to userspace
+24
+               total        used        free      shared  buff/cache   available
+Mem:            62Gi       7.6Gi       906Mi       160Mi        53Gi        53Gi
+Swap:          8.0Gi       0.0Ki       8.0Gi
+PRETTY_NAME="Ubuntu 22.04.5 LTS"
+NAME="Ubuntu"
+VERSION_ID="22.04"
+VERSION="22.04.5 LTS (Jammy Jellyfish)"
+VERSION_CODENAME=jammy
+ID=ubuntu
+ID_LIKE=debian
+HOME_URL="https://www.ubuntu.com/"
+SUPPORT_URL="https://help.ubuntu.com/"
+BUG_REPORT_URL="https://bugs.launchpad.net/ubuntu/"
+PRIVACY_POLICY_URL="https://www.ubuntu.com/legal/terms-and-policies/privacy-policy"
+UBUNTU_CODENAME=jammy
+6.8.0-138-generic
+
+nvidia-ctk --version: nvidia-ctk: command not found
+
+Json for formatting capability discovery (RAM)
+
+Sriram:
+-What component data do we need for the capability discovery
+- Ex.:
+{
+  "schema_version": "1",
+  "node_id": "utm-lab-pc-14",
+  "collected_at": "2026-10-09T14:00:00Z",
+  "gpus": [
+    {
+      "index": 0,
+      "uuid": "GPU-8a1f...",
+      "name": "NVIDIA GeForce RTX 3080",
+      "vram_total_mib": 10240,
+      "vram_used_mib": 0,
+      "vram_free_mib": 0,
+      "pci_bus_id": "00000000:01:00.0",
+      "compute_capability": "8.6"
+    }
+  ],
+  "driver": { "version": "550.54.14", "cuda_version": "12.4" },
+  "runtimes": {
+    "podman": { "installed": true, "version": "4.9.3", "rootless": true },
+    "cdi": { "available": true, "devices": ["nvidia.com/gpu=0", "nvidia.com/gpu=all"] }
+  },
+  "host": { "cpu_model": "...", "cpu_cores": 16, "ram_total_mib": 32000, "os": "Ubuntu 22.04", "kernel": "6.5.0", "arch": "amd64" },
+  "probe_errors": []
+}
+{
+  "node_id": "lab-node-01",
+  "gpus": [
+    {
+      "name": "NVIDIA A100",
+      "memory_total_mib": 40960,
+      "driver_version": "550.54",
+      "mig_enabled": false
+    }
+  ],
+  "runtimes": {
+    "podman": true,
+    "nvidia_ctk": true,
+    "cdi_available": true
+  }
+}
+-Podman usage or alternatives
+-nvidia-ctk usage or alternatives
+-Use smi or nvml for parsing?
+
+Andrew Wang:
+-Ask to install Podman onto the lab machine
