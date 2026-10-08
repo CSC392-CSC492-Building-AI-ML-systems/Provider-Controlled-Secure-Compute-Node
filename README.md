@@ -66,7 +66,7 @@ The MVP focuses on **curated inference workloads only**. The following are out o
 
 ## Outcome
 
-A deployable prototype of a secure compute node that demonstrates provider-controlled participation in a GPU commons. The design should be suitable for future adoption by organizations such as U of T labs, nonprofits, and research groups contributing underused GPUs.
+A deployable prototype of a secure compute node that demonstrates provider-controlled participation in a GPU commons. The design should be suitable for future adoption by organizations such as UofT labs, nonprofits, and research groups contributing underused GPUs.
 
 ## Deliverables
 
