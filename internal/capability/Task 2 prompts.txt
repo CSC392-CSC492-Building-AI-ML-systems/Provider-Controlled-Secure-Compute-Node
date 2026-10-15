@@ -27,4 +27,5 @@ See runtimes.go
 
 REMINDERS:
     Wire up probes.go to main.go so that the probes are registered instead of using hard-coded probes
-    Write tests for host.go, runtimes.go, and probes.go
+    Write tests for host.go, runtimes.go, and probes.go before merging with with dashboard branch
+    Update docs/AI_USAGE.md with my prompts
