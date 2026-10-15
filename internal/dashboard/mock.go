@@ -93,10 +93,10 @@ func (m *MockNode) Metrics(ctx context.Context) (Metrics, error) {
 		CollectedAt: time.Now().UTC(),
 		GPUs: []GPUMetrics{{
 			UUID:           mockGPUUUID,
-			VRAMUsedMB:     used,
-			VRAMFreeMB:     16376 - used,
-			UtilizationPct: util,
-			TemperatureC:   40 + util/4,
+			VRAMUsedMB:     float64(used),
+			VRAMFreeMB:     float64(16376 - used),
+			UtilizationPct: float64(util),
+			TemperatureC:   float64(40 + util/4),
 		}},
 	}, nil
 }

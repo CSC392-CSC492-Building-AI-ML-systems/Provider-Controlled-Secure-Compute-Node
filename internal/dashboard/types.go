@@ -89,11 +89,11 @@ type Metrics struct {
 }
 
 type GPUMetrics struct {
-	UUID           string `json:"uuid"`
-	VRAMUsedMB     int    `json:"vram_used_mb"`
-	VRAMFreeMB     int    `json:"vram_free_mb"`
-	UtilizationPct int    `json:"utilization_pct"`
-	TemperatureC   int    `json:"temperature_c"`
+	UUID           string  `json:"uuid"`
+	VRAMUsedMB     float64 `json:"vram_used_mb"`
+	VRAMFreeMB     float64 `json:"vram_free_mb"`
+	UtilizationPct float64 `json:"utilization_pct"`
+	TemperatureC   float64 `json:"temperature_c"`
 }
 
 type ProbeStatus string
