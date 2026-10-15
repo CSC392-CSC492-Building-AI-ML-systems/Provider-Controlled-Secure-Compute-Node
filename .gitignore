@@ -1,0 +1,8 @@
+.DS_Store
+
+# go build output
+/dashboard-mock
+
+# web app (also covered by web/.gitignore)
+web/node_modules/
+web/dist/
