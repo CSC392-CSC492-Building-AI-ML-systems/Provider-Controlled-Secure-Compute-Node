@@ -49,6 +49,13 @@ func (manager *Manager) ReceiveOffer(ctx context.Context, offer Offer) error {
 		return err
 	}
 	if rejectionReason != "" {
+		if err := manager.coordinator.ReportRejected(
+			ctx,
+			offer.ID,
+			rejectionReason,
+		); err != nil {
+			return fmt.Errorf("report lease rejection: %w", err)
+		}
 		return &OfferRejectedError{Reason: rejectionReason}
 	}
 
