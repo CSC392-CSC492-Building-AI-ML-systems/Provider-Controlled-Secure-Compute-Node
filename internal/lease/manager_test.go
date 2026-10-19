@@ -60,6 +60,8 @@ type stubCoordinator struct {
 	rejectionErr error
 	accepted     []string
 	acceptedErr  error
+	results      []Result
+	resultErr    error
 }
 
 func (coordinator *stubCoordinator) ReportAccepted(
@@ -84,9 +86,10 @@ func (coordinator *stubCoordinator) ReportRejected(
 
 func (coordinator *stubCoordinator) ReportResult(
 	_ context.Context,
-	_ Result,
+	result Result,
 ) error {
-	return nil
+	coordinator.results = append(coordinator.results, result)
+	return coordinator.resultErr
 }
 
 func TestReceiveOfferValidatesOffer(t *testing.T) {
@@ -483,5 +486,78 @@ func TestReceiveOfferAtomicallyReservesSingleLease(t *testing.T) {
 			"already-active rejections = %d, want 1",
 			alreadyActiveCount,
 		)
+	}
+}
+
+func TestReceiveOfferRecoversFromLaunchFailure(t *testing.T) {
+	launchError := errors.New("runtime unavailable")
+	fixedNow := time.Date(2026, time.October, 19, 12, 0, 0, 0, time.UTC)
+	coordinator := &stubCoordinator{}
+	manager := NewManager(
+		&stubAllowlist{allowed: true},
+		&stubContainerEngine{err: launchError},
+		coordinator,
+	)
+	manager.now = func() time.Time { return fixedNow }
+
+	err := manager.ReceiveOffer(context.Background(), Offer{
+		ID:          "lease-1",
+		ImageDigest: "sha256:approved",
+		ExpiresAt:   fixedNow.Add(time.Minute),
+	})
+
+	if !errors.Is(err, launchError) {
+		t.Fatalf("ReceiveOffer() error = %v, want launch error", err)
+	}
+	if manager.State() != StateIdle {
+		t.Errorf("State() = %q, want %q", manager.State(), StateIdle)
+	}
+	if _, exists := manager.ActiveLease(); exists {
+		t.Fatal("ActiveLease() exists = true, want false")
+	}
+	if len(coordinator.results) != 1 {
+		t.Fatalf(
+			"ReportResult() calls = %d, want 1",
+			len(coordinator.results),
+		)
+	}
+	result := coordinator.results[0]
+	if result.LeaseID != "lease-1" {
+		t.Errorf("reported lease ID = %q, want %q", result.LeaseID, "lease-1")
+	}
+	if result.Outcome != OutcomeFailed {
+		t.Errorf(
+			"reported outcome = %q, want %q",
+			result.Outcome,
+			OutcomeFailed,
+		)
+	}
+	if result.ExitCode != nil {
+		t.Errorf("reported exit code = %v, want nil", result.ExitCode)
+	}
+}
+
+func TestReceiveOfferPreservesLaunchAndReportingErrors(t *testing.T) {
+	launchError := errors.New("runtime unavailable")
+	reportError := errors.New("coordinator unavailable")
+	fixedNow := time.Date(2026, time.October, 19, 12, 0, 0, 0, time.UTC)
+	manager := NewManager(
+		&stubAllowlist{allowed: true},
+		&stubContainerEngine{err: launchError},
+		&stubCoordinator{resultErr: reportError},
+	)
+	manager.now = func() time.Time { return fixedNow }
+
+	err := manager.ReceiveOffer(context.Background(), Offer{
+		ID:          "lease-1",
+		ImageDigest: "sha256:approved",
+		ExpiresAt:   fixedNow.Add(time.Minute),
+	})
+
+	if !errors.Is(err, launchError) {
+		t.Errorf("ReceiveOffer() error = %v, want launch error", err)
+	}
+	if !errors.Is(err, reportError) {
+		t.Errorf("ReceiveOffer() error = %v, want reporting error", err)
 	}
 }

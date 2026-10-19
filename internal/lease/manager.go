@@ -73,7 +73,19 @@ func (manager *Manager) ReceiveOffer(ctx context.Context, offer Offer) error {
 
 	workload, err := manager.engine.Launch(ctx, offer.ImageDigest)
 	if err != nil {
-		return fmt.Errorf("launch lease workload: %w", err)
+		launchErr := fmt.Errorf("launch lease workload: %w", err)
+		manager.clearActiveLease()
+
+		if reportErr := manager.coordinator.ReportResult(ctx, Result{
+			LeaseID: offer.ID,
+			Outcome: OutcomeFailed,
+		}); reportErr != nil {
+			return errors.Join(
+				launchErr,
+				fmt.Errorf("report lease launch failure: %w", reportErr),
+			)
+		}
+		return launchErr
 	}
 	manager.setWorkload(workload)
 
