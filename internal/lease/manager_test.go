@@ -27,13 +27,16 @@ type rejectionReport struct {
 type stubCoordinator struct {
 	rejections   []rejectionReport
 	rejectionErr error
+	accepted     []string
+	acceptedErr  error
 }
 
 func (coordinator *stubCoordinator) ReportAccepted(
 	_ context.Context,
-	_ string,
+	leaseID string,
 ) error {
-	return nil
+	coordinator.accepted = append(coordinator.accepted, leaseID)
+	return coordinator.acceptedErr
 }
 
 func (coordinator *stubCoordinator) ReportRejected(
@@ -223,5 +226,85 @@ func TestReceiveOfferReturnsRejectionReportingError(t *testing.T) {
 
 	if !errors.Is(err, expectedError) {
 		t.Fatalf("ReceiveOffer() error = %v, want coordinator error", err)
+	}
+}
+
+func TestReceiveOfferRecordsAcceptedLease(t *testing.T) {
+	fixedNow := time.Date(2026, time.October, 19, 12, 0, 0, 0, time.UTC)
+	coordinator := &stubCoordinator{}
+	manager := NewManager(
+		&stubAllowlist{allowed: true},
+		nil,
+		coordinator,
+	)
+	manager.now = func() time.Time { return fixedNow }
+	offer := Offer{
+		ID:          "lease-1",
+		ImageDigest: "sha256:approved",
+		ExpiresAt:   fixedNow.Add(time.Minute),
+	}
+
+	if err := manager.ReceiveOffer(context.Background(), offer); err != nil {
+		t.Fatalf("ReceiveOffer() returned unexpected error: %v", err)
+	}
+
+	if manager.State() != StateRunning {
+		t.Errorf("State() = %q, want %q", manager.State(), StateRunning)
+	}
+	activeLease, exists := manager.ActiveLease()
+	if !exists {
+		t.Fatal("ActiveLease() exists = false, want true")
+	}
+	if activeLease.ID != offer.ID {
+		t.Errorf("active lease ID = %q, want %q", activeLease.ID, offer.ID)
+	}
+	if activeLease.ImageDigest != offer.ImageDigest {
+		t.Errorf(
+			"active image digest = %q, want %q",
+			activeLease.ImageDigest,
+			offer.ImageDigest,
+		)
+	}
+	if !activeLease.ExpiresAt.Equal(offer.ExpiresAt) {
+		t.Errorf(
+			"active expiration = %v, want %v",
+			activeLease.ExpiresAt,
+			offer.ExpiresAt,
+		)
+	}
+	if len(coordinator.accepted) != 1 ||
+		coordinator.accepted[0] != offer.ID {
+		t.Errorf(
+			"accepted lease reports = %v, want [%q]",
+			coordinator.accepted,
+			offer.ID,
+		)
+	}
+}
+
+func TestReceiveOfferClearsLeaseWhenAcceptanceReportFails(t *testing.T) {
+	expectedError := errors.New("coordinator unavailable")
+	fixedNow := time.Date(2026, time.October, 19, 12, 0, 0, 0, time.UTC)
+	manager := NewManager(
+		&stubAllowlist{allowed: true},
+		nil,
+		&stubCoordinator{acceptedErr: expectedError},
+	)
+	manager.now = func() time.Time { return fixedNow }
+
+	err := manager.ReceiveOffer(context.Background(), Offer{
+		ID:          "lease-1",
+		ImageDigest: "sha256:approved",
+		ExpiresAt:   fixedNow.Add(time.Minute),
+	})
+
+	if !errors.Is(err, expectedError) {
+		t.Fatalf("ReceiveOffer() error = %v, want coordinator error", err)
+	}
+	if manager.State() != StateIdle {
+		t.Errorf("State() = %q, want %q", manager.State(), StateIdle)
+	}
+	if _, exists := manager.ActiveLease(); exists {
+		t.Fatal("ActiveLease() exists = true, want false")
 	}
 }

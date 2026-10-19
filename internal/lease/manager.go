@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -22,10 +23,13 @@ func (err *OfferRejectedError) Error() string {
 
 // Manager coordinates the node-side lease lifecycle.
 type Manager struct {
+	mu          sync.RWMutex
 	allowlist   ImageAllowlist
 	engine      ContainerEngine
 	coordinator Coordinator
 	now         func() time.Time
+	state       State
+	activeLease *Active
 }
 
 // NewManager wires the lease manager to its external dependencies.
@@ -39,6 +43,7 @@ func NewManager(
 		engine:      engine,
 		coordinator: coordinator,
 		now:         time.Now,
+		state:       StateIdle,
 	}
 }
 
@@ -57,6 +62,12 @@ func (manager *Manager) ReceiveOffer(ctx context.Context, offer Offer) error {
 			return fmt.Errorf("report lease rejection: %w", err)
 		}
 		return &OfferRejectedError{Reason: rejectionReason}
+	}
+
+	manager.recordAcceptedOffer(offer)
+	if err := manager.coordinator.ReportAccepted(ctx, offer.ID); err != nil {
+		manager.clearActiveLease()
+		return fmt.Errorf("report lease acceptance: %w", err)
 	}
 
 	return nil
@@ -87,6 +98,26 @@ func (manager *Manager) validateOffer(
 	return "", nil
 }
 
+func (manager *Manager) recordAcceptedOffer(offer Offer) {
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+
+	manager.activeLease = &Active{
+		ID:          offer.ID,
+		ImageDigest: offer.ImageDigest,
+		ExpiresAt:   offer.ExpiresAt,
+	}
+	manager.state = StateRunning
+}
+
+func (manager *Manager) clearActiveLease() {
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+
+	manager.activeLease = nil
+	manager.state = StateIdle
+}
+
 // Drain stops future lease acceptance while preserving the current workload.
 func (manager *Manager) Drain(_ context.Context) error {
 	return ErrNotImplemented
@@ -104,10 +135,19 @@ func (manager *Manager) SetCoordinatorConnected(_ bool) {
 
 // State returns the manager's current lifecycle state.
 func (manager *Manager) State() State {
-	return StateIdle
+	manager.mu.RLock()
+	defer manager.mu.RUnlock()
+
+	return manager.state
 }
 
 // ActiveLease returns the current lease, if one exists.
 func (manager *Manager) ActiveLease() (Active, bool) {
-	return Active{}, false
+	manager.mu.RLock()
+	defer manager.mu.RUnlock()
+
+	if manager.activeLease == nil {
+		return Active{}, false
+	}
+	return *manager.activeLease, true
 }
