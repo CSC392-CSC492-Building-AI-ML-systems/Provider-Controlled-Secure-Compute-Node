@@ -30,6 +30,7 @@ type Manager struct {
 	now         func() time.Time
 	state       State
 	activeLease *Active
+	workload    Workload
 }
 
 // NewManager wires the lease manager to its external dependencies.
@@ -69,6 +70,12 @@ func (manager *Manager) ReceiveOffer(ctx context.Context, offer Offer) error {
 		manager.clearActiveLease()
 		return fmt.Errorf("report lease acceptance: %w", err)
 	}
+
+	workload, err := manager.engine.Launch(ctx, offer.ImageDigest)
+	if err != nil {
+		return fmt.Errorf("launch lease workload: %w", err)
+	}
+	manager.setWorkload(workload)
 
 	return nil
 }
@@ -110,11 +117,19 @@ func (manager *Manager) recordAcceptedOffer(offer Offer) {
 	manager.state = StateRunning
 }
 
+func (manager *Manager) setWorkload(workload Workload) {
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+
+	manager.workload = workload
+}
+
 func (manager *Manager) clearActiveLease() {
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
 
 	manager.activeLease = nil
+	manager.workload = nil
 	manager.state = StateIdle
 }
 

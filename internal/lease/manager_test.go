@@ -19,6 +19,36 @@ func (allowlist *stubAllowlist) IsAllowed(
 	return allowlist.allowed, allowlist.err
 }
 
+type stubWorkload struct{}
+
+func (workload *stubWorkload) Wait(_ context.Context) (int, error) {
+	return 0, nil
+}
+
+func (workload *stubWorkload) Kill(_ context.Context) error {
+	return nil
+}
+
+type stubContainerEngine struct {
+	launchedDigests []string
+	workload        Workload
+	err             error
+}
+
+func (engine *stubContainerEngine) Launch(
+	_ context.Context,
+	imageDigest string,
+) (Workload, error) {
+	engine.launchedDigests = append(engine.launchedDigests, imageDigest)
+	if engine.err != nil {
+		return nil, engine.err
+	}
+	if engine.workload == nil {
+		engine.workload = &stubWorkload{}
+	}
+	return engine.workload, nil
+}
+
 type rejectionReport struct {
 	leaseID string
 	reason  RejectionReason
@@ -128,9 +158,10 @@ func TestReceiveOfferValidatesOffer(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			coordinator := &stubCoordinator{}
+			engine := &stubContainerEngine{}
 			manager := NewManager(
 				&stubAllowlist{allowed: test.allowed},
-				nil,
+				engine,
 				coordinator,
 			)
 			manager.now = func() time.Time { return fixedNow }
@@ -144,6 +175,12 @@ func TestReceiveOfferValidatesOffer(t *testing.T) {
 					t.Fatalf(
 						"ReportRejected() calls = %d, want 0",
 						len(coordinator.rejections),
+					)
+				}
+				if len(engine.launchedDigests) != 1 {
+					t.Fatalf(
+						"Launch() calls = %d, want 1",
+						len(engine.launchedDigests),
 					)
 				}
 				return
@@ -178,6 +215,12 @@ func TestReceiveOfferValidatesOffer(t *testing.T) {
 					"reported reason = %q, want %q",
 					coordinator.rejections[0].reason,
 					test.expectedReason,
+				)
+			}
+			if len(engine.launchedDigests) != 0 {
+				t.Fatalf(
+					"Launch() calls = %d, want 0",
+					len(engine.launchedDigests),
 				)
 			}
 		})
@@ -232,9 +275,10 @@ func TestReceiveOfferReturnsRejectionReportingError(t *testing.T) {
 func TestReceiveOfferRecordsAcceptedLease(t *testing.T) {
 	fixedNow := time.Date(2026, time.October, 19, 12, 0, 0, 0, time.UTC)
 	coordinator := &stubCoordinator{}
+	engine := &stubContainerEngine{}
 	manager := NewManager(
 		&stubAllowlist{allowed: true},
-		nil,
+		engine,
 		coordinator,
 	)
 	manager.now = func() time.Time { return fixedNow }
@@ -278,6 +322,14 @@ func TestReceiveOfferRecordsAcceptedLease(t *testing.T) {
 			"accepted lease reports = %v, want [%q]",
 			coordinator.accepted,
 			offer.ID,
+		)
+	}
+	if len(engine.launchedDigests) != 1 ||
+		engine.launchedDigests[0] != offer.ImageDigest {
+		t.Errorf(
+			"launched image digests = %v, want [%q]",
+			engine.launchedDigests,
+			offer.ImageDigest,
 		)
 	}
 }
