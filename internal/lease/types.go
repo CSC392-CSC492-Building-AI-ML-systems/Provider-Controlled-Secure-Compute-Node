@@ -31,6 +31,8 @@ const (
 	RejectionDraining         RejectionReason = "draining"
 	RejectionAlreadyActive    RejectionReason = "already_active"
 	RejectionDisconnected     RejectionReason = "disconnected"
+	RejectionExpired          RejectionReason = "expired"
+	RejectionInvalidOffer     RejectionReason = "invalid_offer"
 )
 
 // Offer is the coordinator's request to run a digest-pinned image.
