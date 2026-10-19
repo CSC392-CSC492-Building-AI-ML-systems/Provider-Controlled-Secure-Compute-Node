@@ -1,0 +1,19 @@
+FROM docker.io/ollama/ollama:0.40.6@sha256:265409e1d931028a8f7d5a32bcbafddd7bffbc6cc629d77efe9560adf692a5e7
+
+LABEL org.opencontainers.image.title="Provider Node Curated Ollama"
+LABEL org.opencontainers.image.description="Baseline Ollama inference service for the secure compute node"
+LABEL org.opencontainers.image.source="https://github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node"
+LABEL org.opencontainers.image.version="0.1.0"
+
+ENV OLLAMA_HOST=0.0.0.0:11434
+
+COPY --chmod=0555 entrypoint.sh /usr/local/bin/start-ollama
+
+EXPOSE 11434
+
+HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=6 \
+    CMD OLLAMA_HOST=127.0.0.1:11434 /bin/ollama list || exit 1
+
+STOPSIGNAL SIGTERM
+
+ENTRYPOINT ["/usr/local/bin/start-ollama"]
