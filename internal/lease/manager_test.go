@@ -3,6 +3,7 @@ package lease
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 )
@@ -358,5 +359,129 @@ func TestReceiveOfferClearsLeaseWhenAcceptanceReportFails(t *testing.T) {
 	}
 	if _, exists := manager.ActiveLease(); exists {
 		t.Fatal("ActiveLease() exists = true, want false")
+	}
+}
+
+func TestReceiveOfferRejectsSecondActiveLease(t *testing.T) {
+	fixedNow := time.Date(2026, time.October, 19, 12, 0, 0, 0, time.UTC)
+	coordinator := &stubCoordinator{}
+	engine := &stubContainerEngine{}
+	manager := NewManager(
+		&stubAllowlist{allowed: true},
+		engine,
+		coordinator,
+	)
+	manager.now = func() time.Time { return fixedNow }
+
+	firstOffer := Offer{
+		ID:          "lease-1",
+		ImageDigest: "sha256:first",
+		ExpiresAt:   fixedNow.Add(time.Minute),
+	}
+	if err := manager.ReceiveOffer(context.Background(), firstOffer); err != nil {
+		t.Fatalf("first ReceiveOffer() returned unexpected error: %v", err)
+	}
+
+	secondOffer := Offer{
+		ID:          "lease-2",
+		ImageDigest: "sha256:second",
+		ExpiresAt:   fixedNow.Add(time.Minute),
+	}
+	err := manager.ReceiveOffer(context.Background(), secondOffer)
+
+	var rejection *OfferRejectedError
+	if !errors.As(err, &rejection) {
+		t.Fatalf("second ReceiveOffer() error = %v, want OfferRejectedError", err)
+	}
+	if rejection.Reason != RejectionAlreadyActive {
+		t.Errorf(
+			"second rejection reason = %q, want %q",
+			rejection.Reason,
+			RejectionAlreadyActive,
+		)
+	}
+	if len(engine.launchedDigests) != 1 {
+		t.Errorf("Launch() calls = %d, want 1", len(engine.launchedDigests))
+	}
+	activeLease, exists := manager.ActiveLease()
+	if !exists || activeLease.ID != firstOffer.ID {
+		t.Errorf(
+			"ActiveLease() = (%+v, %t), want first lease",
+			activeLease,
+			exists,
+		)
+	}
+}
+
+type synchronizedAllowlist struct {
+	arrivals sync.WaitGroup
+	release  chan struct{}
+}
+
+func newSynchronizedAllowlist(expectedCalls int) *synchronizedAllowlist {
+	allowlist := &synchronizedAllowlist{release: make(chan struct{})}
+	allowlist.arrivals.Add(expectedCalls)
+	return allowlist
+}
+
+func (allowlist *synchronizedAllowlist) IsAllowed(
+	_ context.Context,
+	_ string,
+) (bool, error) {
+	allowlist.arrivals.Done()
+	<-allowlist.release
+	return true, nil
+}
+
+func TestReceiveOfferAtomicallyReservesSingleLease(t *testing.T) {
+	fixedNow := time.Date(2026, time.October, 19, 12, 0, 0, 0, time.UTC)
+	allowlist := newSynchronizedAllowlist(2)
+	manager := NewManager(
+		allowlist,
+		&stubContainerEngine{},
+		&stubCoordinator{},
+	)
+	manager.now = func() time.Time { return fixedNow }
+
+	errorsByOffer := make(chan error, 2)
+	for _, leaseID := range []string{"lease-1", "lease-2"} {
+		go func(id string) {
+			errorsByOffer <- manager.ReceiveOffer(context.Background(), Offer{
+				ID:          id,
+				ImageDigest: "sha256:approved",
+				ExpiresAt:   fixedNow.Add(time.Minute),
+			})
+		}(leaseID)
+	}
+
+	allowlist.arrivals.Wait()
+	close(allowlist.release)
+
+	var acceptedCount int
+	var alreadyActiveCount int
+	for range 2 {
+		err := <-errorsByOffer
+		if err == nil {
+			acceptedCount++
+			continue
+		}
+
+		var rejection *OfferRejectedError
+		if errors.As(err, &rejection) &&
+			rejection.Reason == RejectionAlreadyActive {
+			alreadyActiveCount++
+			continue
+		}
+		t.Fatalf("ReceiveOffer() returned unexpected error: %v", err)
+	}
+
+	if acceptedCount != 1 {
+		t.Errorf("accepted offers = %d, want 1", acceptedCount)
+	}
+	if alreadyActiveCount != 1 {
+		t.Errorf(
+			"already-active rejections = %d, want 1",
+			alreadyActiveCount,
+		)
 	}
 }

@@ -50,22 +50,22 @@ func NewManager(
 
 // ReceiveOffer is the entry point for a coordinator lease offer.
 func (manager *Manager) ReceiveOffer(ctx context.Context, offer Offer) error {
+	if rejectionReason := manager.availabilityRejection(); rejectionReason != "" {
+		return manager.rejectOffer(ctx, offer.ID, rejectionReason)
+	}
+
 	rejectionReason, err := manager.validateOffer(ctx, offer)
 	if err != nil {
 		return err
 	}
 	if rejectionReason != "" {
-		if err := manager.coordinator.ReportRejected(
-			ctx,
-			offer.ID,
-			rejectionReason,
-		); err != nil {
-			return fmt.Errorf("report lease rejection: %w", err)
-		}
-		return &OfferRejectedError{Reason: rejectionReason}
+		return manager.rejectOffer(ctx, offer.ID, rejectionReason)
 	}
 
-	manager.recordAcceptedOffer(offer)
+	if rejectionReason := manager.reserveAcceptedOffer(offer); rejectionReason != "" {
+		return manager.rejectOffer(ctx, offer.ID, rejectionReason)
+	}
+
 	if err := manager.coordinator.ReportAccepted(ctx, offer.ID); err != nil {
 		manager.clearActiveLease()
 		return fmt.Errorf("report lease acceptance: %w", err)
@@ -105,9 +105,40 @@ func (manager *Manager) validateOffer(
 	return "", nil
 }
 
-func (manager *Manager) recordAcceptedOffer(offer Offer) {
+func (manager *Manager) rejectOffer(
+	ctx context.Context,
+	leaseID string,
+	reason RejectionReason,
+) error {
+	if err := manager.coordinator.ReportRejected(ctx, leaseID, reason); err != nil {
+		return fmt.Errorf("report lease rejection: %w", err)
+	}
+	return &OfferRejectedError{Reason: reason}
+}
+
+func (manager *Manager) availabilityRejection() RejectionReason {
+	manager.mu.RLock()
+	defer manager.mu.RUnlock()
+
+	if manager.activeLease != nil || manager.state == StateRunning {
+		return RejectionAlreadyActive
+	}
+	if manager.state == StateDraining {
+		return RejectionDraining
+	}
+	return ""
+}
+
+func (manager *Manager) reserveAcceptedOffer(offer Offer) RejectionReason {
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
+
+	if manager.activeLease != nil || manager.state == StateRunning {
+		return RejectionAlreadyActive
+	}
+	if manager.state == StateDraining {
+		return RejectionDraining
+	}
 
 	manager.activeLease = &Active{
 		ID:          offer.ID,
@@ -115,6 +146,7 @@ func (manager *Manager) recordAcceptedOffer(offer Offer) {
 		ExpiresAt:   offer.ExpiresAt,
 	}
 	manager.state = StateRunning
+	return ""
 }
 
 func (manager *Manager) setWorkload(workload Workload) {
