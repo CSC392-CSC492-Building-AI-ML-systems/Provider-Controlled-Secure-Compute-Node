@@ -38,9 +38,9 @@ That rebuild changes the image digest.
 
 The model is stored in the named Podman volume `ollama-models`, not copied
 into the image. The volume is mounted read-only while the service runs, so a
-request cannot save a different model into it. Startup also rejects a missing
-model, a model whose manifest does not contain the pinned weight digest, and
-any additional model manifest.
+request cannot save a different model into it. Startup hashes the weight file
+with SHA-256 and rejects a missing model, a digest mismatch, or any additional
+model manifest.
 
 ## Current scope
 

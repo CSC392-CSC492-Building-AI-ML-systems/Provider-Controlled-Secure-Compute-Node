@@ -73,6 +73,14 @@ if [ -L "$weight_blob" ] || [ ! -f "$weight_blob" ]; then
     exit 20
 fi
 
+expected_digest="${APPROVED_WEIGHT_DIGEST#sha256:}"
+actual_digest="$(sha256sum "$weight_blob" | awk '{print $1}')"
+if [ "$actual_digest" != "$expected_digest" ]; then
+    echo "Weight file for ${APPROVED_MODEL} does not match pinned digest." >&2
+    echo "Expected ${APPROVED_WEIGHT_DIGEST}, got sha256:${actual_digest}." >&2
+    exit 20
+fi
+
 if ! grep -F -q "$APPROVED_WEIGHT_DIGEST" "$manifest"; then
     echo "Installed ${APPROVED_MODEL} does not match pinned digest ${APPROVED_WEIGHT_DIGEST}." >&2
     exit 20
