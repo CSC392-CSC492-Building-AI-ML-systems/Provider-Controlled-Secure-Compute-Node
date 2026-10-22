@@ -36,10 +36,27 @@ esac
 
 mkdir -p "$OLLAMA_MODELS"
 log=/tmp/ollama-provision.log
+download_snapshot=""
 /bin/ollama serve >"$log" 2>&1 &
 server_pid=$!
 
+remove_downloaded_files() {
+    if [ -z "$download_snapshot" ]; then
+        return 0
+    fi
+
+    find "$OLLAMA_MODELS" -type f | sort | while IFS= read -r path; do
+        if ! grep -F -x -q "$path" "$download_snapshot"; then
+            rm -f "$path"
+        fi
+    done
+}
+
 cleanup() {
+    if [ -n "$download_snapshot" ]; then
+        rm -f "$download_snapshot"
+    fi
+
     if kill -0 "$server_pid" 2>/dev/null; then
         kill -TERM "$server_pid" 2>/dev/null || true
         wait "$server_pid" || true
@@ -73,6 +90,19 @@ if [ "$ready" -ne 1 ]; then
 fi
 
 echo "Downloading approved model ${APPROVED_MODEL}."
+download_snapshot="$(mktemp)"
+find "$OLLAMA_MODELS" -type f | sort > "$download_snapshot"
 /bin/ollama pull "$APPROVED_MODEL"
+
+set +e
 /usr/local/bin/verify-approved-model
+status=$?
+set -e
+
+if [ "$status" -ne 0 ]; then
+    echo "Verification failed. Removing the downloaded model so provisioning can be retried." >&2
+    remove_downloaded_files
+    exit "$status"
+fi
+
 echo "Verified approved model ${APPROVED_MODEL}."
