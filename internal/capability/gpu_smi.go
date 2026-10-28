@@ -187,7 +187,7 @@ func parseMetricsQuery(output []byte) ([]dashboard.GPUMetrics, error) {
 		}
 		values := make([]float64, 4)
 		for i := range values {
-			values[i], err = strconv.ParseFloat(row[i+1], 64)
+			values[i], err = parseMetricValue(row[i+1])
 			if err != nil {
 				return nil, fmt.Errorf("parse GPU metric %q: %w", row[i+1], err)
 			}
@@ -201,6 +201,19 @@ func parseMetricsQuery(output []byte) ([]dashboard.GPUMetrics, error) {
 		metrics = []dashboard.GPUMetrics{}
 	}
 	return metrics, nil
+}
+
+// parseMetricValue converts an nvidia-smi metric to a number. nvidia-smi uses
+// bracketed status values when a metric is unavailable or unsupported; the
+// dashboard's numeric metric fields represent those values as zero.
+func parseMetricValue(value string) (float64, error) {
+	value = strings.TrimSpace(value)
+	switch strings.ToLower(value) {
+	case "[n/a]", "[not supported]":
+		return 0, nil
+	default:
+		return strconv.ParseFloat(value, 64)
+	}
 }
 
 // run executes one nvidia-smi command with the collector's timeout.
