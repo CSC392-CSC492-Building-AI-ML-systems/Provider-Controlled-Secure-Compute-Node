@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -67,12 +68,35 @@ func (c *GPUSMICollector) Capabilities(ctx context.Context) (dashboard.Capabilit
 		return dashboard.CapabilityReport{}, err
 	}
 
+	runtimes, runtimeErr := DetectRuntimes(ctx)
+	if runtimes.CDI.Devices == nil {
+		runtimes.CDI.Devices = []string{}
+	}
+
+	host, hostErr := DetectHostInfo(os.DirFS("/"))
+
+	probeErrors := []dashboard.ProbeError{}
+	if runtimeErr != nil {
+		probeErrors = append(probeErrors, dashboard.ProbeError{
+			Probe: "runtime_detection",
+			Error: runtimeErr.Error(),
+		})
+	}
+	if hostErr != nil {
+		probeErrors = append(probeErrors, dashboard.ProbeError{
+			Probe: "host_detection",
+			Error: hostErr.Error(),
+		})
+	}
+
 	return dashboard.CapabilityReport{
 		SchemaVersion: capabilitySchemaVersion,
 		CollectedAt:   time.Now(),
 		GPUs:          gpus,
 		Driver:        dashboard.DriverInfo{Version: driver, CUDAVersion: cuda},
-		ProbeErrors:   []dashboard.ProbeError{},
+		Runtimes:      runtimes,
+		Host:          host,
+		ProbeErrors:   probeErrors,
 	}, nil
 }
 
