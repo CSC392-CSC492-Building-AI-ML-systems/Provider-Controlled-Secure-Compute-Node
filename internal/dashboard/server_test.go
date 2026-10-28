@@ -66,7 +66,7 @@ func TestNoGPUReportsEmptyArrays(t *testing.T) {
 		}
 	}
 	rec := do(t, h, "GET", "/api/capabilities", "")
-	for _, want := range []string{`"probe_errors":[]`, `"devices":[]`} {
+	for _, want := range []string{`"probe_errors":[]`, `"devices":[]`, `"models":[]`} {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Errorf("want %s, got %s", want, rec.Body.String())
 		}

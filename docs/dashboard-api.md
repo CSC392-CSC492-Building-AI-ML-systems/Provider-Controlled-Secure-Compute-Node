@@ -84,11 +84,22 @@ tamper/reject test, local CLI socket) are TBD and come in step 2.
     "kernel": "6.5.0-35-generic",
     "arch": "amd64"
   },
+  "models": [
+    {
+      "name": "llama-3.1-8b-instruct-q4_k_m.gguf",
+      "sha256": "714b3d11e842c1c32f8a39b45f45d5711b20b68c85dcb6a19d73f25a22373f2e",
+      "size_mb": 4922
+    }
+  ],
   "probe_errors": []
 }
 ```
 
 - No GPU: `"gpus": []`, never `null`.
+- `models` lists the model artifacts discovered in `/var/cache/models`. Each
+  entry includes the filename, lowercase SHA-256 digest, and size in MiB. An
+  existing but empty model mount is represented as `"models": []`, never
+  `null`.
 - `probe_errors`: `[{"probe": "podman", "error": "..."}]` for detection steps
   that failed; everything else is still reported.
 

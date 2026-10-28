@@ -29,6 +29,7 @@ type CapabilityReport struct {
 	Driver        DriverInfo   `json:"driver"`
 	Runtimes      Runtimes     `json:"runtimes"`
 	Host          HostInfo     `json:"host"`
+	Models        []ModelInfo  `json:"models"`
 	ProbeErrors   []ProbeError `json:"probe_errors"`
 }
 
@@ -76,6 +77,12 @@ type HostInfo struct {
 	OS         string `json:"os"`
 	Kernel     string `json:"kernel"`
 	Arch       string `json:"arch"`
+}
+
+type ModelInfo struct {
+	Name   string `json:"name"`
+	SHA256 string `json:"sha256"`
+	SizeMB int    `json:"size_mb"`
 }
 
 // ProbeError is a capability detection step that failed; the rest of the report still holds.

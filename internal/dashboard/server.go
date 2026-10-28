@@ -76,6 +76,9 @@ func (s *Server) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 	if c.Runtimes.CDI.Devices == nil {
 		c.Runtimes.CDI.Devices = []string{}
 	}
+	if c.Models == nil {
+		c.Models = []ModelInfo{}
+	}
 	writeJSON(w, http.StatusOK, c)
 }
 

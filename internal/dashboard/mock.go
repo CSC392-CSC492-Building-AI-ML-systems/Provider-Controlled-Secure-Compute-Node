@@ -74,6 +74,11 @@ func (m *MockNode) Capabilities(ctx context.Context) (CapabilityReport, error) {
 			Kernel:     "6.5.0-35-generic",
 			Arch:       "amd64",
 		},
+		Models: []ModelInfo{{
+			Name:   "llama-3.1-8b-instruct-q4_k_m.gguf",
+			SHA256: "714b3d11e842c1c32f8a39b45f45d5711b20b68c85dcb6a19d73f25a22373f2e",
+			SizeMB: 4922,
+		}},
 		ProbeErrors: []ProbeError{},
 	}, nil
 }
@@ -171,6 +176,7 @@ func MockProbes() []Probe {
 		mockProbe{"capability_discovery", ProbeResult{ProbePass, "[mock] 1 GPU detected, driver 550.54.14, CUDA 12.4"}},
 		mockProbe{"lease_heartbeat", ProbeResult{ProbePass, "[mock] state transitions valid"}},
 		mockProbe{"rootless_podman_cdi", ProbeResult{ProbePass, "[mock] podman 4.9.3 rootless, CDI nvidia.com/gpu=all present"}},
+		mockProbe{"model_mount", ProbeResult{ProbePass, "[mock] 1 verified model mounted read-only"}},
 		mockProbe{"ipc_socket", ProbeResult{ProbeWarn, "[mock] socket is 0660, expected 0600"}},
 		mockProbe{"lan_isolation", ProbeResult{ProbeFail, "[mock] container reached 192.168.1.1"}},
 	}

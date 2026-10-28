@@ -1,0 +1,88 @@
+TASK 3 NOTES AND ASSUMPTIONS
+============================
+
+Mock data
+---------
+
+- Values returned by `go run ./cmd/dashboard-mock` are demonstration values.
+  They are not detected from the developer's computer or the lab machine.
+- The NVIDIA GeForce RTX 4080, GPU UUID, driver version, CUDA version, CPU,
+  RAM, OS, kernel, Podman, and CDI values were already hardcoded in
+  `internal/dashboard/mock.go`.
+- The model name `llama-3.1-8b-instruct-q4_k_m.gguf` was added as illustrative
+  mock data for the Model Mount card.
+- The model SHA-256 value in `internal/dashboard/mock.go` is placeholder data.
+  It was not calculated from a real model file and must not be treated as an
+  integrity result.
+- The model size is also illustrative mock data.
+- Mock probe messages describe simulated results. They are not evidence that
+  the local or lab machine passed those checks.
+
+Model contract assumptions
+--------------------------
+
+- `GET /api/capabilities` now includes a `models` array.
+- Each model entry has `name`, `sha256`, and `size_mb` fields.
+- SHA-256 values are expected to be lowercase hexadecimal strings computed
+  from the complete model file.
+- Model sizes use MiB, following the existing `_mb` API convention.
+- An empty or unavailable model collection is represented as `models: []`,
+  never `null`.
+- Task 3 defines and consumes this contract, but does not implement real model
+  directory scanning or hashing.
+- The real backend must scan `/var/cache/models`, identify the model files,
+  calculate their SHA-256 hashes, and populate `CapabilityReport.Models`.
+- The frontend currently treats a non-empty `models` list as verified data. The
+  backend is therefore responsible for returning only models whose metadata
+  and hash calculation completed successfully.
+
+Dashboard behavior
+------------------
+
+- The Model Mount card displays the first model's name and shortened SHA-256,
+  plus the total model count and combined size.
+- When `models` is empty, the card displays "No models mounted". This state can
+  mean the directory is empty or that the backend did not provide model data;
+  the probe result and `probe_errors` provide the detailed diagnosis.
+- The VRAM card totals VRAM across all reported GPUs and matches live metrics
+  to GPUs using UUIDs.
+- If no GPUs are returned, the UI displays "No GPU detected" rather than
+  failing or displaying a null value.
+- If capability or metrics requests fail, the cards display an error state.
+- Host & GPU Details displays every GPU returned by the API. It does not assume
+  that the node has exactly one GPU.
+- Timestamps are received as RFC 3339 values and displayed using the browser's
+  local time zone.
+
+Export Report behavior
+----------------------
+
+- Export Report fetches fresh data from `GET /api/capabilities` and
+  `GET /api/probes` when the button is clicked.
+- The downloaded JSON contains `exported_at`, `capabilities`, and `probes`.
+- Exporting does not run the probes automatically. It exports their latest
+  stored results, which may include `not_run` or `not_implemented` states.
+- `checked_at` is omitted by the API for a probe that has never run; the UI
+  displays "Not checked" in that case.
+
+Probe assumptions
+-----------------
+
+- A probe is a diagnostic validation check, separate from capability data
+  collection.
+- Probe statuses are `pass`, `warn`, `fail`, `not_run`, and
+  `not_implemented`.
+- The mock model-mount probe result is simulated. The real ModelMountProbe must
+  determine whether `/var/cache/models` exists and is readable.
+- Real probe results should be used as validation evidence; mock probe results
+  should only be used to develop and demonstrate the dashboard.
+
+Backend integration still required
+----------------------------------
+
+- Implement real model discovery and SHA-256 hashing for
+  `CapabilityReport.Models`.
+- Ensure the real capability source returns `models: []` when no models exist.
+- Register the real capability probes with the dashboard probe registry.
+- Replace `MockNode` with the real capability/status sources when running the
+  production node agent.

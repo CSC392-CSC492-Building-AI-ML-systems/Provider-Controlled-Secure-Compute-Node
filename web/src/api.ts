@@ -29,7 +29,7 @@ export interface CapabilityReport {
   gpus: GPU[]
   driver: { version: string; cuda_version: string }
   runtimes: {
-    podman: { installed: boolean; version?: string; rootless: boolean }
+    podman: { installed: boolean; version?: string; rootless: boolean; oci_runtime?: string }
     cdi: { available: boolean; devices: string[] }
   }
   host: {
@@ -40,6 +40,7 @@ export interface CapabilityReport {
     kernel: string
     arch: string
   }
+  models: { name: string; sha256: string; size_mb: number }[]
   probe_errors: { probe: string; error: string }[]
 }
 
