@@ -32,8 +32,10 @@ type CapabilityDiscoveryProbe struct {
 	Collect CapabilityReportCollector
 }
 
+// ID returns the stable identifier for the capability-discovery probe.
 func (CapabilityDiscoveryProbe) ID() string { return "capability_discovery" }
 
+// Run collects the capability report and fails if collection or any probe failed.
 func (p CapabilityDiscoveryProbe) Run(ctx context.Context) dashboard.ProbeResult {
 	if p.Collect == nil {
 		return dashboard.ProbeResult{
@@ -71,8 +73,10 @@ type RootlessPodmanCDIProbe struct {
 	DetectRuntimes RuntimeDetector
 }
 
+// ID returns the stable identifier for the rootless Podman/CDI probe.
 func (RootlessPodmanCDIProbe) ID() string { return "rootless_podman_cdi" }
 
+// Run verifies that Podman is installed and rootless and that CDI is available.
 func (p RootlessPodmanCDIProbe) Run(ctx context.Context) dashboard.ProbeResult {
 	detect := p.DetectRuntimes
 	if detect == nil {
@@ -115,8 +119,10 @@ type ModelMountProbe struct {
 	FS fs.FS
 }
 
+// ID returns the stable identifier for the model-mount probe.
 func (ModelMountProbe) ID() string { return "model_mount" }
 
+// Run checks that the model cache path exists and can be read as a directory.
 func (p ModelMountProbe) Run(context.Context) dashboard.ProbeResult {
 	fsys := p.FS
 	if fsys == nil {

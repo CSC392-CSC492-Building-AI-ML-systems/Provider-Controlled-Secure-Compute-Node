@@ -66,6 +66,7 @@ func DetectHostInfo(fsys fs.FS) (dashboard.HostInfo, error) {
 	}, nil
 }
 
+// parseCPUInfo extracts the CPU model and counts unique processor entries.
 func parseCPUInfo(data []byte) (model string, cores int, err error) {
 	processors := make(map[string]struct{})
 	scanner := bufio.NewScanner(strings.NewReader(string(data)))
@@ -99,6 +100,7 @@ func parseCPUInfo(data []byte) (model string, cores int, err error) {
 	return model, len(processors), nil
 }
 
+// parseMemTotalMB reads MemTotal from proc/meminfo and converts it to megabytes.
 func parseMemTotalMB(data []byte) (int, error) {
 	scanner := bufio.NewScanner(strings.NewReader(string(data)))
 	for scanner.Scan() {
@@ -122,6 +124,7 @@ func parseMemTotalMB(data []byte) (int, error) {
 	return 0, fmt.Errorf("MemTotal not found")
 }
 
+// parseOSName extracts and unquotes PRETTY_NAME from an os-release file.
 func parseOSName(data []byte) (string, error) {
 	scanner := bufio.NewScanner(strings.NewReader(string(data)))
 	for scanner.Scan() {

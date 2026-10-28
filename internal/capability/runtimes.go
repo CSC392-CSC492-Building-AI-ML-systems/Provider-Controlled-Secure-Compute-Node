@@ -21,9 +21,11 @@ import (
 	"github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node/internal/dashboard"
 )
 
-// DetectRuntimes reports Podman and CDI availability. A missing Podman binary
-// is represented as Installed=false. If nvidia-ctk is absent, CDI spec files
-// are checked in the standard system directories.
+/*
+DetectRuntimes reports Podman and CDI availability.
+A missing Podman binary is represented as Installed=false.
+If nvidia-ctk is absent, CDI spec files are checked in the standard system directories.
+*/
 func DetectRuntimes(ctx context.Context) (dashboard.Runtimes, error) {
 	podman, podmanErr := detectPodman(ctx)
 	cdi, cdiErr := detectCDI(ctx)
@@ -35,20 +37,31 @@ func DetectRuntimes(ctx context.Context) (dashboard.Runtimes, error) {
 	return runtimes, errors.Join(podmanErr, cdiErr)
 }
 
+// detectPodman locates Podman, reads its host information, and reports its runtime details.
 func detectPodman(ctx context.Context) (dashboard.PodmanInfo, error) {
+	// Look for podman program
 	path, err := exec.LookPath("podman")
+
+	// Some error occured during lookup
 	if err != nil {
+		// Return empty PodmanInfo instance if podman program not found
 		if errors.Is(err, exec.ErrNotFound) {
 			return dashboard.PodmanInfo{}, nil
 		}
+
+		// Podman found but error on lookup: return empty podman lookup and resulting error
 		return dashboard.PodmanInfo{}, fmt.Errorf("find podman executable: %w", err)
 	}
 
+	// Exec to get host info of podman program
 	output, err := exec.CommandContext(ctx, path, "info", "--format", "json").Output()
+	
+	// If any error, return empty podman with resulting error
 	if err != nil {
 		return dashboard.PodmanInfo{}, fmt.Errorf("run podman info: %w", err)
 	}
 
+	// Parse info into temp for PodmanInfo struct
 	var info struct {
 		Version struct {
 			Version string `json:"Version"`
@@ -75,7 +88,7 @@ func detectPodman(ctx context.Context) (dashboard.PodmanInfo, error) {
 	if ociRuntime == "" {
 		return dashboard.PodmanInfo{}, fmt.Errorf("parse podman info JSON: host.ociRuntime.name is missing")
 	}
-
+	
 	return dashboard.PodmanInfo{
 		Installed:  true,
 		Version:    strings.TrimSpace(info.Version.Version),
@@ -84,6 +97,7 @@ func detectPodman(ctx context.Context) (dashboard.PodmanInfo, error) {
 	}, nil
 }
 
+// detectCDI lists CDI devices with nvidia-ctk or checks standard CDI spec directories.
 func detectCDI(ctx context.Context) (dashboard.CDIInfo, error) {
 	path, err := exec.LookPath("nvidia-ctk")
 	if err != nil {
@@ -105,6 +119,7 @@ func detectCDI(ctx context.Context) (dashboard.CDIInfo, error) {
 	}, nil
 }
 
+// parseCDIDeviceList returns unique, valid CDI device names in sorted order.
 func parseCDIDeviceList(output string) []string {
 	seen := make(map[string]struct{})
 	for _, line := range strings.Split(output, "\n") {
@@ -121,6 +136,7 @@ func parseCDIDeviceList(output string) []string {
 	return sortedKeys(seen)
 }
 
+// detectCDISpecFiles reports whether standard CDI directories contain a spec file.
 func detectCDISpecFiles() (dashboard.CDIInfo, error) {
 	paths := []string{"/etc/cdi", "/var/run/cdi"}
 	found := false
@@ -150,6 +166,7 @@ func detectCDISpecFiles() (dashboard.CDIInfo, error) {
 	}, errors.Join(readErrors...)
 }
 
+// sortedKeys returns the keys from values in ascending order.
 func sortedKeys(values map[string]struct{}) []string {
 	keys := make([]string, 0, len(values))
 	for value := range values {
