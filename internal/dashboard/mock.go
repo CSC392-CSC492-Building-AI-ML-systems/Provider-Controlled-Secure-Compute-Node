@@ -63,7 +63,7 @@ func (m *MockNode) Capabilities(ctx context.Context) (CapabilityReport, error) {
 		}},
 		Driver: DriverInfo{Version: "550.54.14", CUDAVersion: "12.4"},
 		Runtimes: Runtimes{
-			Podman: PodmanInfo{Installed: true, Version: "4.9.3", Rootless: true},
+			Podman: PodmanInfo{Installed: true, Version: "4.9.3", Rootless: true, OCIRuntime: "crun"},
 			CDI:    CDIInfo{Available: true, Devices: []string{"nvidia.com/gpu=0", "nvidia.com/gpu=all"}},
 		},
 		Host: HostInfo{

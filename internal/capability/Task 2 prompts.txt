@@ -1,0 +1,31 @@
+1 -------------------------
+From this task description:
+
+1. Task 2: Runtime and host detection, plus the three capability probes
+Files: internal/capability/runtimes.go, host.go, probes.go, their tests, and fixtures.
+
+Podman: run podman info --format json and read the version, whether it's rootless, and the OCI runtime.
+CDI: run nvidia-ctk cdi list. If that tool is missing, fall back to looking for spec files in /etc/cdi and /var/run/cdi.
+Host: CPU model and cores, RAM, OS, kernel, and architecture. Read files through fs.FS so tests can use fake files.
+Probes, using the shared dashboard.Probe interface:
+capability_discovery: the report collects without errors.
+rootless_podman_cdi: Podman is installed and rootless, and a CDI spec exists.
+model_mount: /var/cache/models exists and is readable.
+On the real lab machine, rootless_podman_cdi should honestly come back as FAIL: Podman not installed. That's correct behaviour, not a bug.
+Done when: there are fixtures for "installed" and "missing" cases for both Podman and CDI, and the probes return the right status for each.
+
+Good fit for: someone interested in the Linux and container side. It leads naturally into M4.
+
+Can you tell me which each of the files are meant to do
+---------------------------
+2 -------------------------
+See host.go
+---------------------------
+3 -------------------------
+See runtimes.go
+---------------------------
+
+REMINDERS:
+    Wire up probes.go to main.go so that the probes are registered instead of using hard-coded probes
+    Write tests for host.go, runtimes.go, and probes.go before merging with with dashboard branch
+    Update docs/AI_USAGE.md with my prompts

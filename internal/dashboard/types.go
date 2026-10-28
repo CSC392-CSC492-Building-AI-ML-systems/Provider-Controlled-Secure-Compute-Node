@@ -58,9 +58,10 @@ type Runtimes struct {
 }
 
 type PodmanInfo struct {
-	Installed bool   `json:"installed"`
-	Version   string `json:"version,omitempty"`
-	Rootless  bool   `json:"rootless"`
+	Installed  bool   `json:"installed"`
+	Version    string `json:"version,omitempty"`
+	Rootless   bool   `json:"rootless"`
+	OCIRuntime string `json:"oci_runtime,omitempty"`
 }
 
 type CDIInfo struct {

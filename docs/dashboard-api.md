@@ -73,7 +73,7 @@ tamper/reject test, local CLI socket) are TBD and come in step 2.
   ],
   "driver": { "version": "550.54.14", "cuda_version": "12.4" },
   "runtimes": {
-    "podman": { "installed": true, "version": "4.9.3", "rootless": true },
+    "podman": { "installed": true, "version": "4.9.3", "rootless": true, "oci_runtime": "crun" },
     "cdi": { "available": true, "devices": ["nvidia.com/gpu=0", "nvidia.com/gpu=all"] }
   },
   "host": {
