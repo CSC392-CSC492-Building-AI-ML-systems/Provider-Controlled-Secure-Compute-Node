@@ -1,0 +1,12 @@
+Podman man page: https://docs.podman.io/en/v5.0.2/Commands.html
+
+Running a job on a new container: podman run -it [IMAGE] [PROGRAM] [ARG...]
+- -i: keep STDIN open (can close if needed)
+- -t: pseudo-TTY (teletypewriter, allows for interactive shell coupled if with -i)
+- IMAGE: OS image (e.g options: ubuntu, fedora) (add ":latest" for latest image version)
+- PROGRAM and ARGS: the program and its arguments to be ran on the container
+
+Running a job on an existing container: podman exec -it [CONTAINER_ID] [PROGRAM] [ARG...]
+- CONTAINER_ID: id of a container currently up and running
+
+List podman containers and status: https://docs.podman.io/en/v5.0.2/markdown/podman-ps.1.html
