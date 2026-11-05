@@ -10,3 +10,11 @@ Running a job on an existing container: podman exec -it [CONTAINER_ID] [PROGRAM]
 - CONTAINER_ID: id of a container currently up and running
 
 List podman containers and status: https://docs.podman.io/en/v5.0.2/markdown/podman-ps.1.html
+
+Things to do:
+- Run program on a container (existing or craft new)
+- Check container health (starting, running, completed, error, etc.)
+- Repackage results to send back to requester (heavy since we gotta figure out how every style of output should be done):
+    - Terminal output (STDOUT)
+    - Files created (do we zip it up and send it to the coordinator through scp?)
+    - Misc. (such as empty files/directories. Do we send the back too?)
