@@ -1,3 +1,8 @@
+/*
+ * TODO:
+ * - Check if the lab machine needs to alter the env ran during runner func
+ */
+
 // Command dashboard-mock serves the dashboard API with mock data, so the web
 // UI can be built before the real agent subsystems exist.
 package main
@@ -11,10 +16,16 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"os/exec"
 	"syscall"
 	"time"
+	
+	// For testing
+	// "fmt"
+	// "strings"
 
 	"github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node/internal/dashboard"
+	"github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node/internal/capability"
 )
 
 func main() {
@@ -31,7 +42,19 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-
+	
+	runner := func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		cmd := exec.CommandContext(ctx, name, args...)
+		// Check env used during cmd execution
+		// substr := 
+		// for _, dir := range cmd.Environ() {
+		// 	if strings.Contains(dir, substr) {
+		// 		fmt.Println(dir)
+		// 	}
+		// }
+		return cmd.CombinedOutput()
+	}
+	gpu_smi := capability.NewGPUSMICollector(runner, 0)
 	node := dashboard.NewMockNode()
 	bus := dashboard.NewBus()
 	reg := dashboard.NewRegistry()
@@ -41,7 +64,7 @@ func main() {
 			os.Exit(1)
 		}
 	}
-	srv := &dashboard.Server{Status: node, Caps: node, Control: node, Probes: reg, Events: bus}
+	srv := &dashboard.Server{Status: node, Caps: gpu_smi, Control: node, Probes: reg, Events: bus}
 	if fi, err := os.Stat(*webDir); err == nil && fi.IsDir() {
 		srv.Static = http.FileServer(http.Dir(*webDir))
 	} else {
