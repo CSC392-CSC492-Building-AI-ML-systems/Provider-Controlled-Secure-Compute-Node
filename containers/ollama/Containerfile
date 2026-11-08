@@ -1,0 +1,23 @@
+FROM docker.io/ollama/ollama:0.40.6@sha256:265409e1d931028a8f7d5a32bcbafddd7bffbc6cc629d77efe9560adf692a5e7
+
+LABEL org.opencontainers.image.title="Provider Node Curated Ollama"
+LABEL org.opencontainers.image.description="Curated Ollama inference service pinned to TinyLlama 1.1B"
+LABEL org.opencontainers.image.source="https://github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node"
+LABEL org.opencontainers.image.version="0.2.0"
+
+ENV OLLAMA_HOST=0.0.0.0:11434
+ENV OLLAMA_MODELS=/models
+
+COPY --chmod=0444 approved-model.env /usr/local/share/provider-node/approved-model.env
+COPY --chmod=0555 verify-approved-model.sh /usr/local/bin/verify-approved-model
+COPY --chmod=0555 provision-approved-model.sh /usr/local/bin/provision-approved-model
+COPY --chmod=0555 entrypoint.sh /usr/local/bin/start-ollama
+
+EXPOSE 11434
+
+HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=6 \
+    CMD /usr/local/bin/verify-approved-model && OLLAMA_HOST=127.0.0.1:11434 /bin/ollama list
+
+STOPSIGNAL SIGTERM
+
+ENTRYPOINT ["/usr/local/bin/start-ollama"]
