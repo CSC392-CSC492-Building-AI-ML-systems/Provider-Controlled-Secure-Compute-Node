@@ -14,7 +14,7 @@ List podman containers and status: https://docs.podman.io/en/v5.0.2/markdown/pod
 Things to do:
 - Run program on a container (existing or craft new)
 - Check container health (starting, running, completed, error, etc.)
-- Repackage results to send back to requester (heavy since we gotta figure out how every style of output should be done):
-    - Terminal output (STDOUT)
-    - Files created (do we zip it up and send it to the coordinator through scp?)
-    - Misc. (such as empty files/directories. Do we send the back too?)
+- Repackage results to send back to requester:
+    - Restore to sent state in terms of compressions and the likes
+    - Since the package is an image of a disk, all file outputs are saved on the image
+    - For stdout results, maybe save them to an out-file or delegate that to the coordinator to configure and save to the thing
