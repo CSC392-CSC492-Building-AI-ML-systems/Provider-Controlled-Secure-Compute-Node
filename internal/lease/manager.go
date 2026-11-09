@@ -31,6 +31,7 @@ type Manager struct {
 	state       State
 	activeLease *Active
 	workload    Workload
+	waiting     bool
 }
 
 // NewManager wires the lease manager to its external dependencies.
@@ -71,10 +72,16 @@ func (manager *Manager) ReceiveOffer(ctx context.Context, offer Offer) error {
 		return fmt.Errorf("report lease acceptance: %w", err)
 	}
 
-	workload, err := manager.engine.Launch(ctx, offer.ImageDigest)
+	launchCtx, cancel := context.WithDeadline(ctx, offer.ExpiresAt)
+	defer cancel()
+	workload, err := manager.engine.Launch(launchCtx, offer.ImageDigest)
 	if err != nil {
 		launchErr := fmt.Errorf("launch lease workload: %w", err)
-		manager.clearActiveLease()
+		if workload != nil {
+			manager.setWorkload(workload)
+		} else {
+			manager.clearActiveLease()
+		}
 
 		if reportErr := manager.coordinator.ReportResult(ctx, Result{
 			LeaseID: offer.ID,
@@ -174,7 +181,54 @@ func (manager *Manager) clearActiveLease() {
 
 	manager.activeLease = nil
 	manager.workload = nil
+	manager.waiting = false
 	manager.state = StateIdle
+}
+
+// Wait collects the active workload's result and releases the node for another
+// offer. Call after ReceiveOffer succeeds. Cancellation or expiry kills the job.
+func (manager *Manager) Wait(ctx context.Context) error {
+	manager.mu.Lock()
+	if manager.workload == nil || manager.waiting {
+		manager.mu.Unlock()
+		return errors.New("no active workload available to wait for")
+	}
+	workload, active := manager.workload, *manager.activeLease
+	manager.waiting = true
+	manager.mu.Unlock()
+
+	waitCtx, cancel := context.WithDeadline(ctx, active.ExpiresAt)
+	defer cancel()
+	code, waitErr := workload.Wait(waitCtx)
+	result := Result{LeaseID: active.ID, Outcome: OutcomeCompleted, ExitCode: &code}
+	if waitErr != nil {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		killErr := workload.Kill(cleanupCtx)
+		cleanupCancel()
+		if killErr != nil {
+			manager.mu.Lock()
+			manager.waiting = false
+			manager.mu.Unlock()
+			return errors.Join(waitErr, fmt.Errorf("terminate workload: %w", killErr))
+		}
+		result.ExitCode = nil
+	}
+	if waitErr != nil || code != 0 {
+		result.Outcome = OutcomeFailed
+	}
+	if !manager.now().Before(active.ExpiresAt) {
+		result.Outcome = OutcomeExpired
+	}
+	// Report before allowing another offer. A cancelled job context must not
+	// suppress the terminal report.
+	reportCtx, reportCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer reportCancel()
+	reportErr := manager.coordinator.ReportResult(reportCtx, result)
+	manager.clearActiveLease()
+	if reportErr != nil {
+		reportErr = fmt.Errorf("report lease result: %w", reportErr)
+	}
+	return errors.Join(waitErr, reportErr)
 }
 
 // Drain stops future lease acceptance while preserving the current workload.

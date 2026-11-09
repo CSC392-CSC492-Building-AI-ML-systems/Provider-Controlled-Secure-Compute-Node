@@ -34,15 +34,17 @@ type stubContainerEngine struct {
 	launchedDigests []string
 	workload        Workload
 	err             error
+	launchDeadline  time.Time
 }
 
 func (engine *stubContainerEngine) Launch(
-	_ context.Context,
+	ctx context.Context,
 	imageDigest string,
 ) (Workload, error) {
+	engine.launchDeadline, _ = ctx.Deadline()
 	engine.launchedDigests = append(engine.launchedDigests, imageDigest)
 	if engine.err != nil {
-		return nil, engine.err
+		return engine.workload, engine.err
 	}
 	if engine.workload == nil {
 		engine.workload = &stubWorkload{}
@@ -298,6 +300,9 @@ func TestReceiveOfferRecordsAcceptedLease(t *testing.T) {
 
 	if manager.State() != StateRunning {
 		t.Errorf("State() = %q, want %q", manager.State(), StateRunning)
+	}
+	if !engine.launchDeadline.Equal(offer.ExpiresAt) {
+		t.Fatalf("launch deadline = %v, want %v", engine.launchDeadline, offer.ExpiresAt)
 	}
 	activeLease, exists := manager.ActiveLease()
 	if !exists {
@@ -559,5 +564,111 @@ func TestReceiveOfferPreservesLaunchAndReportingErrors(t *testing.T) {
 	}
 	if !errors.Is(err, reportError) {
 		t.Errorf("ReceiveOffer() error = %v, want reporting error", err)
+	}
+}
+
+type controlledWorkload struct {
+	code    int
+	waitErr error
+	killErr error
+	killed  bool
+}
+
+func (workload *controlledWorkload) Wait(context.Context) (int, error) {
+	return workload.code, workload.waitErr
+}
+func (workload *controlledWorkload) Kill(ctx context.Context) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	workload.killed = true
+	return workload.killErr
+}
+
+func TestWaitReportsResultsAndReleasesNode(t *testing.T) {
+	for _, scenario := range []string{"completed", "failed", "cancelled", "expired", "cleanup-failed", "report-failed"} {
+		t.Run(scenario, func(t *testing.T) {
+			workload := &controlledWorkload{}
+			coordinator := &stubCoordinator{}
+			manager := NewManager(&stubAllowlist{allowed: true}, &stubContainerEngine{workload: workload}, coordinator)
+			offer := Offer{ID: "lease-1", ImageDigest: "sha256:approved", ExpiresAt: time.Now().Add(time.Minute)}
+			if err := manager.ReceiveOffer(context.Background(), offer); err != nil {
+				t.Fatal(err)
+			}
+			switch scenario {
+			case "failed":
+				workload.code = 23
+			case "cancelled", "expired", "cleanup-failed":
+				workload.waitErr = context.Canceled
+			case "report-failed":
+				coordinator.resultErr = errors.New("report failed")
+			}
+			if scenario == "expired" {
+				manager.now = func() time.Time { return offer.ExpiresAt }
+			}
+			if scenario == "cleanup-failed" {
+				workload.killErr = errors.New("cleanup failed")
+			}
+			err := manager.Wait(context.Background())
+			wantErr := scenario == "cancelled" || scenario == "expired" || scenario == "cleanup-failed" || scenario == "report-failed"
+			if (err != nil) != wantErr {
+				t.Fatalf("Wait error=%v", err)
+			}
+			if workload.waitErr != nil && !workload.killed {
+				t.Fatal("wait failure did not kill workload")
+			}
+			if scenario == "cleanup-failed" {
+				if manager.State() != StateRunning || len(coordinator.results) != 0 {
+					t.Fatal("released node before container was removed")
+				}
+				return
+			}
+			if manager.State() != StateIdle {
+				t.Fatal("node remains busy after workload cleanup")
+			}
+			if len(coordinator.results) != 1 {
+				t.Fatalf("results=%v", coordinator.results)
+			}
+			result := coordinator.results[0]
+			outcome := OutcomeCompleted
+			if scenario == "failed" || scenario == "cancelled" {
+				outcome = OutcomeFailed
+			}
+			if scenario == "expired" {
+				outcome = OutcomeExpired
+			}
+			if result.Outcome != outcome {
+				t.Fatalf("result=%v", result)
+			}
+			if scenario == "failed" && (result.ExitCode == nil || *result.ExitCode != 23) {
+				t.Fatalf("lost job exit code: %v", result)
+			}
+		})
+	}
+}
+
+func TestLaunchCleanupFailureKeepsNodeReserved(t *testing.T) {
+	workload := &controlledWorkload{}
+	launchErr := errors.New("start and cleanup failed")
+	manager := NewManager(&stubAllowlist{allowed: true}, &stubContainerEngine{workload: workload, err: launchErr}, &stubCoordinator{})
+	offer := Offer{ID: "lease-1", ImageDigest: "sha256:approved", ExpiresAt: time.Now().Add(time.Minute)}
+	if err := manager.ReceiveOffer(context.Background(), offer); !errors.Is(err, launchErr) {
+		t.Fatalf("error=%v", err)
+	}
+	if manager.State() != StateRunning {
+		t.Fatal("released node after cleanup failure")
+	}
+	if _, exists := manager.ActiveLease(); !exists {
+		t.Fatal("lost lease after cleanup failure")
+	}
+	if err := manager.ReceiveOffer(context.Background(), offer); err == nil {
+		t.Fatal("accepted another job before cleanup")
+	}
+	// The retained handle lets the owner retry supervision/cleanup.
+	if err := manager.Wait(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if manager.State() != StateIdle {
+		t.Fatal("node remains reserved after successful retry")
 	}
 }
