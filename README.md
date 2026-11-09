@@ -75,3 +75,10 @@ A deployable prototype of a secure compute node that demonstrates provider-contr
 - [ ] **Security checklist** covering protections such as rootless containers, image pinning, host isolation, and resource limits
 - [ ] **Provider configuration guide** explaining setup, controls, and reclaim procedures
 - [ ] **Failure-case documentation** covering container crashes, lost heartbeat, and emergency reclaim
+
+## Run an accepted workload
+
+The node agent can accept one JSON offer on stdin, pull its allowlisted image by
+SHA-256 digest, and run it with local rootless Podman. See the
+[execution guide](docs/podman-execution.md) for setup, the command, isolation
+policy, and the current coordinator integration boundary.
