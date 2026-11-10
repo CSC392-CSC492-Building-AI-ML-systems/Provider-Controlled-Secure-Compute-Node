@@ -73,7 +73,9 @@ These are local events, not network acknowledgements from the remote coordinator
 Rejected offers never invoke Podman. A launch failure emits a failed result and
 returns a command error. A nonzero job exit produces a failed result with its exit
 code; the command itself succeeds if execution supervision and reporting succeed.
-Diagnostics go to stderr. Workload logs and output files are not collected.
+Diagnostics go to stderr. Output files are not collected. Pass `-show-output` to print up to 16 KiB of
+container logs to stderr after exit. This opts into a container-local log capped
+at 64 KiB, removed along with the container; default execution keeps logging off.
 
 ## Container policy and cleanup
 
@@ -123,3 +125,26 @@ acceptance-before-pull, policy flags, rejected offers, launch failures, nonzero
 exits, cancellation cleanup and result reporting. They do not establish that a
 host's kernel or cgroup delegation enforces the limits. Validate an approved,
 small image on the intended rootless Podman host before deployment.
+
+## One-command smoke test
+
+After installing rootless Podman, run from the repository:
+
+```sh
+./scripts/smoke-podman.sh
+```
+
+On Ubuntu/Linux Mint the prerequisites can be installed with:
+
+```sh
+sudo apt-get update
+sudo apt-get install -y podman uidmap slirp4netns fuse-overlayfs
+```
+
+The script downloads the public [Podman hello image](https://github.com/containers/PodmanHello),
+resolves its digest, generates a temporary allowlist and five-minute offer, builds
+the agent, and runs the offer with `-show-output`. Expect the container's own
+`Hello Podman World` greeting, acceptance/result JSON, and a PASS line. It fails
+if the greeting is absent or the result is unsuccessful. Temporary artifacts are
+kept in the printed `/tmp/node-podman-smoke.*` directory for inspection. This test
+uses the existing image entrypoint; it does not accept arbitrary job commands.

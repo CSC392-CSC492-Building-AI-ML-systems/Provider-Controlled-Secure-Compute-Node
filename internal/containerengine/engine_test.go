@@ -210,3 +210,39 @@ func TestPodmanCommandUsesLocalModeAndPreservesCancellation(t *testing.T) {
 		t.Fatalf("diagnostic length=%d", buffer.Len())
 	}
 }
+
+func TestOptionalContainerOutput(t *testing.T) {
+	engine := testEngine(t)
+	var output strings.Builder
+	engine.Output = &output
+	var calls [][]string
+	engine.run = func(_ context.Context, args ...string) (string, error) {
+		calls = append(calls, args)
+		switch args[0] {
+		case "info":
+			return "true", nil
+		case "wait":
+			return "0", nil
+		case "logs":
+			return "I'm in a podman container!\n", nil
+		}
+		return "", nil
+	}
+	workload, err := engine.Launch(context.Background(), testDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := workload.Wait(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if output.String() != "I'm in a podman container!\n" {
+		t.Fatalf("output = %q", output.String())
+	}
+	create := strings.Join(calls[2], " ")
+	if !strings.Contains(create, "--log-driver=k8s-file") || !strings.Contains(create, "--log-opt=max-size=64kb") {
+		t.Fatalf("unbounded logging: %s", create)
+	}
+	if calls[len(calls)-1][0] != "rm" {
+		t.Fatal("logs prevented cleanup")
+	}
+}

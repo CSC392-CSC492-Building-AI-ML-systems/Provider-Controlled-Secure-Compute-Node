@@ -19,17 +19,22 @@ import (
 
 func main() {
 	allowlistPath := flag.String("allowlist", "", "provider-owned JSON allowlist file (required)")
+	showOutput := flag.Bool("show-output", false, "print bounded container logs to stderr after exit")
 	flag.Parse()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := run(ctx, *allowlistPath, os.Stdin, os.Stdout); err != nil {
+	var workloadOutput io.Writer
+	if *showOutput {
+		workloadOutput = os.Stderr
+	}
+	if err := run(ctx, *allowlistPath, os.Stdin, os.Stdout, workloadOutput); err != nil {
 		log.Fatal(err)
 	}
 }
 
 // This local handoff exercises the lease boundary without inventing the remote
 // coordinator protocol. Stdout contains decisions/results, never workload output.
-func run(ctx context.Context, path string, input io.Reader, output io.Writer) error {
+func run(ctx context.Context, path string, input io.Reader, output io.Writer, workloadOutput io.Writer) error {
 	checker, err := allowlist.Load(path)
 	if err != nil {
 		return err
@@ -45,7 +50,9 @@ func run(ctx context.Context, path string, input io.Reader, output io.Writer) er
 		return fmt.Errorf("expected exactly one JSON offer")
 	}
 	reporter := &localReporter{encoder: json.NewEncoder(output)}
-	manager := lease.NewManager(checker, containerengine.New(checker), reporter)
+	engine := containerengine.New(checker)
+	engine.Output = workloadOutput
+	manager := lease.NewManager(checker, engine, reporter)
 	if err := manager.ReceiveOffer(ctx, offer); err != nil {
 		return err
 	}

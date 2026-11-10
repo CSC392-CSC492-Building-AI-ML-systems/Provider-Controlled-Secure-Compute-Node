@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -20,6 +21,8 @@ import (
 
 // Engine resolves digests through provider policy, never through coordinator input.
 type Engine struct {
+	// Output optionally receives bounded container logs after exit; nil disables logging.
+	Output    io.Writer
 	allowlist *allowlist.Checker
 	run       func(context.Context, ...string) (string, error)
 }
@@ -71,16 +74,23 @@ func (engine *Engine) Launch(ctx context.Context, digest string) (lease.Workload
 		return nil, context.DeadlineExceeded
 	}
 	seconds := max(1, int(lifetime.Seconds()))
-	_, err = engine.run(setupCtx, "create",
-		"--name="+workload.name, "--pull=never", "--restart=no",
+	args := []string{"create",
+		"--name=" + workload.name, "--pull=never", "--restart=no",
 		"--userns=nomap", "--user=65534:65534", "--cap-drop=ALL",
 		"--security-opt=no-new-privileges", "--network=none",
 		"--pid=private", "--ipc=private", "--uts=private",
 		"--read-only", "--read-only-tmpfs=false", "--image-volume=ignore",
 		"--tmpfs=/tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777",
 		"--pids-limit=128", "--cpus=1", "--memory=512m", "--memory-swap=512m",
-		"--ulimit=nofile=1024:1024", "--log-driver=none", "--http-proxy=false",
-		"--health-cmd=none", "--timeout="+strconv.Itoa(seconds), "--", reference)
+		"--ulimit=nofile=1024:1024", "--http-proxy=false",
+		"--health-cmd=none", "--timeout=" + strconv.Itoa(seconds)}
+	if engine.Output == nil {
+		args = append(args, "--log-driver=none")
+	} else {
+		args = append(args, "--log-driver=k8s-file", "--log-opt=max-size=64kb")
+	}
+	args = append(args, "--", reference)
+	_, err = engine.run(setupCtx, args...)
 	if err == nil {
 		_, err = engine.run(setupCtx, "start", "--", workload.name)
 	}
@@ -111,6 +121,13 @@ func (workload *Workload) Wait(ctx context.Context) (int, error) {
 	code, err := strconv.Atoi(strings.TrimSpace(output))
 	if err != nil || code < 0 || code > 255 {
 		return 0, errors.Join(fmt.Errorf("invalid Podman exit code %q", output), workload.cleanup())
+	}
+	if workload.engine.Output != nil {
+		logs, logErr := workload.engine.run(ctx, "logs", "--", workload.name)
+		if logErr == nil {
+			_, logErr = io.WriteString(workload.engine.Output, logs)
+		}
+		return code, errors.Join(logErr, workload.cleanup())
 	}
 	return code, workload.cleanup()
 }

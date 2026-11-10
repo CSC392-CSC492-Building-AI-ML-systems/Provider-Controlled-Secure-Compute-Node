@@ -50,7 +50,7 @@ esac
 				offer.ImageDigest = "sha256:" + strings.Repeat("b", 64)
 			}
 			input, _ := json.Marshal(offer)
-			err = run(context.Background(), policy, bytes.NewReader(input), output)
+			err = run(context.Background(), policy, bytes.NewReader(input), output, nil)
 			if (err != nil) != (scenario == "pull-failed" || scenario == "rejected") {
 				t.Fatalf("run error=%v", err)
 			}
