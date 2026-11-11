@@ -139,11 +139,11 @@ func (manager *Manager) availabilityRejection() RejectionReason {
 	manager.mu.RLock()
 	defer manager.mu.RUnlock()
 
-	if manager.activeLease != nil || manager.state == StateRunning {
-		return RejectionAlreadyActive
-	}
 	if manager.state == StateDraining {
 		return RejectionDraining
+	}
+	if manager.activeLease != nil || manager.state == StateRunning {
+		return RejectionAlreadyActive
 	}
 	return ""
 }
@@ -152,11 +152,11 @@ func (manager *Manager) reserveAcceptedOffer(offer Offer) RejectionReason {
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
 
-	if manager.activeLease != nil || manager.state == StateRunning {
-		return RejectionAlreadyActive
-	}
 	if manager.state == StateDraining {
 		return RejectionDraining
+	}
+	if manager.activeLease != nil || manager.state == StateRunning {
+		return RejectionAlreadyActive
 	}
 
 	manager.activeLease = &Active{
@@ -233,12 +233,43 @@ func (manager *Manager) Wait(ctx context.Context) error {
 
 // Drain stops future lease acceptance while preserving the current workload.
 func (manager *Manager) Drain(_ context.Context) error {
-	return ErrNotImplemented
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+
+	manager.state = StateDraining
+	return nil
 }
 
 // Reclaim requests immediate termination of the current workload.
-func (manager *Manager) Reclaim(_ context.Context) error {
-	return ErrNotImplemented
+func (manager *Manager) Reclaim(ctx context.Context) error {
+	manager.mu.Lock()
+	if manager.workload == nil || manager.activeLease == nil || manager.waiting {
+		manager.mu.Unlock()
+		return errors.New("no active workload available to reclaim")
+	}
+	workload, active := manager.workload, *manager.activeLease
+	manager.waiting = true
+	manager.mu.Unlock()
+
+	killCtx, killCancel := context.WithTimeout(ctx, 10*time.Second)
+	killErr := workload.Kill(killCtx)
+	killCancel()
+	if killErr != nil {
+		manager.mu.Lock()
+		manager.waiting = false
+		manager.mu.Unlock()
+		return fmt.Errorf("reclaim workload: %w", killErr)
+	}
+
+	result := Result{LeaseID: active.ID, Outcome: OutcomeReclaimed}
+	reportCtx, reportCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	reportErr := manager.coordinator.ReportResult(reportCtx, result)
+	reportCancel()
+	manager.clearActiveLease()
+	if reportErr != nil {
+		return fmt.Errorf("report reclaimed lease: %w", reportErr)
+	}
+	return nil
 }
 
 // SetCoordinatorConnected records coordinator connectivity changes.

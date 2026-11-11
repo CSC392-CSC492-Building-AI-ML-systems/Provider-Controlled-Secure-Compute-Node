@@ -421,6 +421,166 @@ func TestReceiveOfferRejectsSecondActiveLease(t *testing.T) {
 	}
 }
 
+func TestDrainRejectsNewOffers(t *testing.T) {
+	fixedNow := time.Date(2026, time.October, 19, 12, 0, 0, 0, time.UTC)
+	coordinator := &stubCoordinator{}
+	engine := &stubContainerEngine{}
+	manager := NewManager(&stubAllowlist{allowed: true}, engine, coordinator)
+	manager.now = func() time.Time { return fixedNow }
+
+	if err := manager.Drain(context.Background()); err != nil {
+		t.Fatalf("Drain() returned unexpected error: %v", err)
+	}
+	if manager.State() != StateDraining {
+		t.Fatalf("State() = %q, want %q", manager.State(), StateDraining)
+	}
+
+	err := manager.ReceiveOffer(context.Background(), Offer{
+		ID:          "lease-1",
+		ImageDigest: "sha256:approved",
+		ExpiresAt:   fixedNow.Add(time.Minute),
+	})
+	var rejection *OfferRejectedError
+	if !errors.As(err, &rejection) {
+		t.Fatalf("ReceiveOffer() error = %v, want OfferRejectedError", err)
+	}
+	if rejection.Reason != RejectionDraining {
+		t.Errorf("rejection reason = %q, want %q", rejection.Reason, RejectionDraining)
+	}
+	if len(engine.launchedDigests) != 0 {
+		t.Fatalf("Launch() calls = %d, want 0", len(engine.launchedDigests))
+	}
+	if len(coordinator.rejections) != 1 || coordinator.rejections[0].reason != RejectionDraining {
+		t.Fatalf("rejections = %v, want one draining rejection", coordinator.rejections)
+	}
+}
+
+func TestDrainPreservesActiveWorkAndReturnsIdleAfterWait(t *testing.T) {
+	fixedNow := time.Date(2026, time.October, 19, 12, 0, 0, 0, time.UTC)
+	workload := &controlledWorkload{}
+	coordinator := &stubCoordinator{}
+	manager := NewManager(
+		&stubAllowlist{allowed: true},
+		&stubContainerEngine{workload: workload},
+		coordinator,
+	)
+	manager.now = func() time.Time { return fixedNow }
+	offer := Offer{
+		ID:          "lease-1",
+		ImageDigest: "sha256:approved",
+		ExpiresAt:   fixedNow.Add(time.Minute),
+	}
+
+	if err := manager.ReceiveOffer(context.Background(), offer); err != nil {
+		t.Fatalf("ReceiveOffer() returned unexpected error: %v", err)
+	}
+	if err := manager.Drain(context.Background()); err != nil {
+		t.Fatalf("Drain() returned unexpected error: %v", err)
+	}
+	if manager.State() != StateDraining {
+		t.Fatalf("State() = %q, want %q", manager.State(), StateDraining)
+	}
+	if _, exists := manager.ActiveLease(); !exists {
+		t.Fatal("Drain() cleared the active lease")
+	}
+
+	newOfferErr := manager.ReceiveOffer(context.Background(), Offer{
+		ID:          "lease-2",
+		ImageDigest: "sha256:approved",
+		ExpiresAt:   fixedNow.Add(time.Minute),
+	})
+	var rejection *OfferRejectedError
+	if !errors.As(newOfferErr, &rejection) || rejection.Reason != RejectionDraining {
+		t.Fatalf("new offer error = %v, want draining rejection", newOfferErr)
+	}
+
+	if err := manager.Wait(context.Background()); err != nil {
+		t.Fatalf("Wait() returned unexpected error: %v", err)
+	}
+	if manager.State() != StateIdle {
+		t.Fatalf("State() after Wait() = %q, want %q", manager.State(), StateIdle)
+	}
+	if _, exists := manager.ActiveLease(); exists {
+		t.Fatal("active lease remains after Wait()")
+	}
+	if len(coordinator.results) != 1 || coordinator.results[0].Outcome != OutcomeCompleted {
+		t.Fatalf("results = %v, want one completed result", coordinator.results)
+	}
+}
+
+func TestReclaimKillsWorkReportsResultAndReleasesNode(t *testing.T) {
+	fixedNow := time.Date(2026, time.October, 19, 12, 0, 0, 0, time.UTC)
+	workload := &controlledWorkload{}
+	coordinator := &stubCoordinator{}
+	manager := NewManager(
+		&stubAllowlist{allowed: true},
+		&stubContainerEngine{workload: workload},
+		coordinator,
+	)
+	manager.now = func() time.Time { return fixedNow }
+	offer := Offer{
+		ID:          "lease-1",
+		ImageDigest: "sha256:approved",
+		ExpiresAt:   fixedNow.Add(time.Minute),
+	}
+
+	if err := manager.ReceiveOffer(context.Background(), offer); err != nil {
+		t.Fatalf("ReceiveOffer() returned unexpected error: %v", err)
+	}
+	if err := manager.Reclaim(context.Background()); err != nil {
+		t.Fatalf("Reclaim() returned unexpected error: %v", err)
+	}
+	if !workload.killed {
+		t.Fatal("Reclaim() did not kill the workload")
+	}
+	if manager.State() != StateIdle {
+		t.Fatalf("State() after Reclaim() = %q, want %q", manager.State(), StateIdle)
+	}
+	if _, exists := manager.ActiveLease(); exists {
+		t.Fatal("active lease remains after Reclaim()")
+	}
+	if len(coordinator.results) != 1 {
+		t.Fatalf("ReportResult() calls = %d, want 1", len(coordinator.results))
+	}
+	result := coordinator.results[0]
+	if result.LeaseID != offer.ID {
+		t.Errorf("reported lease ID = %q, want %q", result.LeaseID, offer.ID)
+	}
+	if result.Outcome != OutcomeReclaimed {
+		t.Errorf("reported outcome = %q, want %q", result.Outcome, OutcomeReclaimed)
+	}
+	if result.ExitCode != nil {
+		t.Errorf("reported exit code = %v, want nil", result.ExitCode)
+	}
+}
+
+func TestReclaimKeepsNodeReservedWhenKillFails(t *testing.T) {
+	workload := &controlledWorkload{killErr: errors.New("container removal failed")}
+	manager := NewManager(
+		&stubAllowlist{allowed: true},
+		&stubContainerEngine{workload: workload},
+		&stubCoordinator{},
+	)
+	offer := Offer{
+		ID:          "lease-1",
+		ImageDigest: "sha256:approved",
+		ExpiresAt:   time.Now().Add(time.Minute),
+	}
+	if err := manager.ReceiveOffer(context.Background(), offer); err != nil {
+		t.Fatalf("ReceiveOffer() returned unexpected error: %v", err)
+	}
+
+	if err := manager.Reclaim(context.Background()); err == nil {
+		t.Fatal("Reclaim() returned nil, want cleanup error")
+	}
+	if manager.State() != StateRunning {
+		t.Fatalf("State() after failed Reclaim() = %q, want %q", manager.State(), StateRunning)
+	}
+	if _, exists := manager.ActiveLease(); !exists {
+		t.Fatal("active lease was cleared after failed Reclaim()")
+	}
+}
+
 type synchronizedAllowlist struct {
 	arrivals sync.WaitGroup
 	release  chan struct{}
