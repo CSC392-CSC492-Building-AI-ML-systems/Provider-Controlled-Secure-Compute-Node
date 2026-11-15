@@ -31,6 +31,11 @@ type Manager struct {
 	state       State
 	activeLease *Active
 	workload    Workload
+	waiting     bool
+	// waitDone is closed when the in-progress Wait returns.
+	waitDone chan struct{}
+	// reclaimed tells an in-progress Wait that Reclaim killed its workload.
+	reclaimed bool
 }
 
 // NewManager wires the lease manager to its external dependencies.
@@ -71,10 +76,16 @@ func (manager *Manager) ReceiveOffer(ctx context.Context, offer Offer) error {
 		return fmt.Errorf("report lease acceptance: %w", err)
 	}
 
-	workload, err := manager.engine.Launch(ctx, offer.ImageDigest)
+	launchCtx, cancel := context.WithDeadline(ctx, offer.ExpiresAt)
+	defer cancel()
+	workload, err := manager.engine.Launch(launchCtx, offer.ImageDigest)
 	if err != nil {
 		launchErr := fmt.Errorf("launch lease workload: %w", err)
-		manager.clearActiveLease()
+		if workload != nil {
+			manager.setWorkload(workload)
+		} else {
+			manager.clearActiveLease()
+		}
 
 		if reportErr := manager.coordinator.ReportResult(ctx, Result{
 			LeaseID: offer.ID,
@@ -132,11 +143,11 @@ func (manager *Manager) availabilityRejection() RejectionReason {
 	manager.mu.RLock()
 	defer manager.mu.RUnlock()
 
-	if manager.activeLease != nil || manager.state == StateRunning {
-		return RejectionAlreadyActive
-	}
 	if manager.state == StateDraining {
 		return RejectionDraining
+	}
+	if manager.activeLease != nil || manager.state == StateRunning {
+		return RejectionAlreadyActive
 	}
 	return ""
 }
@@ -145,11 +156,11 @@ func (manager *Manager) reserveAcceptedOffer(offer Offer) RejectionReason {
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
 
-	if manager.activeLease != nil || manager.state == StateRunning {
-		return RejectionAlreadyActive
-	}
 	if manager.state == StateDraining {
 		return RejectionDraining
+	}
+	if manager.activeLease != nil || manager.state == StateRunning {
+		return RejectionAlreadyActive
 	}
 
 	manager.activeLease = &Active{
@@ -174,17 +185,162 @@ func (manager *Manager) clearActiveLease() {
 
 	manager.activeLease = nil
 	manager.workload = nil
+	manager.waiting = false
+	manager.waitDone = nil
+	manager.reclaimed = false
 	manager.state = StateIdle
+}
+
+// Wait collects the active workload's result and releases the node for another
+// offer. Call after ReceiveOffer succeeds. Cancellation or expiry kills the job.
+func (manager *Manager) Wait(ctx context.Context) error {
+	manager.mu.Lock()
+	if manager.workload == nil || manager.waiting {
+		manager.mu.Unlock()
+		return errors.New("no active workload available to wait for")
+	}
+	workload, active := manager.workload, *manager.activeLease
+	manager.waiting = true
+	done := make(chan struct{})
+	manager.waitDone = done
+	manager.mu.Unlock()
+	defer close(done)
+
+	waitCtx, cancel := context.WithDeadline(ctx, active.ExpiresAt)
+	defer cancel()
+	code, waitErr := workload.Wait(waitCtx)
+
+	manager.mu.RLock()
+	reclaimed := manager.reclaimed
+	manager.mu.RUnlock()
+	if reclaimed {
+		// Reclaim already removed the workload; its Wait error is expected.
+		return manager.reportReclaimed(active)
+	}
+
+	result := Result{LeaseID: active.ID, Outcome: OutcomeCompleted, ExitCode: &code}
+	if waitErr != nil {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		killErr := workload.Kill(cleanupCtx)
+		cleanupCancel()
+		if killErr != nil {
+			manager.mu.Lock()
+			manager.waiting = false
+			manager.mu.Unlock()
+			return errors.Join(waitErr, fmt.Errorf("terminate workload: %w", killErr))
+		}
+		result.ExitCode = nil
+	}
+	if waitErr != nil || code != 0 {
+		result.Outcome = OutcomeFailed
+	}
+	if !manager.now().Before(active.ExpiresAt) {
+		result.Outcome = OutcomeExpired
+	}
+	// Report before allowing another offer. A cancelled job context must not
+	// suppress the terminal report.
+	reportCtx, reportCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer reportCancel()
+	reportErr := manager.coordinator.ReportResult(reportCtx, result)
+	manager.clearActiveLease()
+	if reportErr != nil {
+		reportErr = fmt.Errorf("report lease result: %w", reportErr)
+	}
+	return errors.Join(waitErr, reportErr)
 }
 
 // Drain stops future lease acceptance while preserving the current workload.
 func (manager *Manager) Drain(_ context.Context) error {
-	return ErrNotImplemented
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+
+	manager.state = StateDraining
+	return nil
 }
 
-// Reclaim requests immediate termination of the current workload.
-func (manager *Manager) Reclaim(_ context.Context) error {
-	return ErrNotImplemented
+// Resume ends a drain so the node accepts new offers again.
+func (manager *Manager) Resume(_ context.Context) error {
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+
+	if manager.state != StateDraining {
+		return nil
+	}
+	if manager.activeLease != nil {
+		manager.state = StateRunning
+	} else {
+		manager.state = StateIdle
+	}
+	return nil
+}
+
+// Reclaim requests immediate termination of the current workload. If Wait is
+// collecting the workload, Reclaim kills it, lets that Wait report the
+// reclaimed result, and returns once the node is released.
+func (manager *Manager) Reclaim(ctx context.Context) error {
+	manager.mu.Lock()
+	if manager.workload == nil || manager.activeLease == nil {
+		manager.mu.Unlock()
+		return errors.New("no active workload available to reclaim")
+	}
+	workload, active := manager.workload, *manager.activeLease
+	if manager.reclaimed {
+		manager.mu.Unlock()
+		return errors.New("workload is already being reclaimed")
+	}
+	manager.reclaimed = true
+	if manager.waiting {
+		done := manager.waitDone
+		manager.mu.Unlock()
+		return manager.reclaimWaited(ctx, workload, done)
+	}
+	manager.waiting = true
+	manager.mu.Unlock()
+
+	killCtx, killCancel := context.WithTimeout(ctx, 10*time.Second)
+	killErr := workload.Kill(killCtx)
+	killCancel()
+	if killErr != nil {
+		manager.mu.Lock()
+		manager.waiting = false
+		manager.reclaimed = false
+		manager.mu.Unlock()
+		return fmt.Errorf("reclaim workload: %w", killErr)
+	}
+
+	return manager.reportReclaimed(active)
+}
+
+// reclaimWaited kills a workload that Wait is collecting, then waits for that
+// Wait to report the reclaimed result and release the node.
+func (manager *Manager) reclaimWaited(ctx context.Context, workload Workload, done <-chan struct{}) error {
+	killCtx, killCancel := context.WithTimeout(ctx, 10*time.Second)
+	killErr := workload.Kill(killCtx)
+	killCancel()
+	if killErr != nil {
+		manager.mu.Lock()
+		manager.reclaimed = false
+		manager.mu.Unlock()
+		return fmt.Errorf("reclaim workload: %w", killErr)
+	}
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("wait for reclaimed workload to be released: %w", ctx.Err())
+	}
+}
+
+func (manager *Manager) reportReclaimed(active Active) error {
+	result := Result{LeaseID: active.ID, Outcome: OutcomeReclaimed}
+	reportCtx, reportCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	reportErr := manager.coordinator.ReportResult(reportCtx, result)
+	reportCancel()
+	manager.clearActiveLease()
+	if reportErr != nil {
+		return fmt.Errorf("report reclaimed lease: %w", reportErr)
+	}
+	return nil
 }
 
 // SetCoordinatorConnected records coordinator connectivity changes.
