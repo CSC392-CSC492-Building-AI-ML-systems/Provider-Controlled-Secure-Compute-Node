@@ -3,8 +3,11 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -23,22 +26,32 @@ import (
 func main() {
 	allowlistPath := flag.String("allowlist", "", "provider-owned JSON allowlist file (required)")
 	showOutput := flag.Bool("show-output", false, "print bounded container logs to stderr after exit")
-	serveMode := flag.Bool("serve", false, "keep running and take commands from gpu-ctl instead of one offer on stdin")
-	socketPath := flag.String("socket", control.DefaultSocketPath(), "control socket used with -serve")
+	interactive := flag.Bool("interactive", false, "configure a local workload through the interactive menu")
 	flag.Parse()
+	var input io.Reader = os.Stdin
+	if *interactive {
+		cfg, err := promptConfig(bufio.NewReader(os.Stdin), Config{Allowlist: *allowlistPath, ShowOutput: *showOutput})
+		if err != nil {
+			if errors.Is(err, errQuit) || errors.Is(err, io.EOF) {
+				return
+			}
+			log.Fatal(err)
+		}
+		offerFile, err := os.Open(cfg.OfferPath)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer offerFile.Close()
+		input = offerFile
+		*allowlistPath, *showOutput = cfg.Allowlist, cfg.ShowOutput
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	var workloadOutput io.Writer
 	if *showOutput {
 		workloadOutput = os.Stderr
 	}
-	if *serveMode {
-		if err := serve(ctx, *allowlistPath, *socketPath, os.Stdout, workloadOutput, log.Default()); err != nil {
-			log.Fatal(err)
-		}
-		return
-	}
-	if err := run(ctx, *allowlistPath, os.Stdin, os.Stdout, workloadOutput); err != nil {
+	if err := run(ctx, *allowlistPath, input, os.Stdout, workloadOutput); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -70,15 +83,9 @@ func run(ctx context.Context, path string, input io.Reader, output io.Writer, wo
 	if err != nil {
 		return err
 	}
-	var offer lease.Offer
-	decoder := json.NewDecoder(io.LimitReader(input, 64*1024))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&offer); err != nil {
-		return fmt.Errorf("decode offer: %w", err)
-	}
-	var extra any
-	if err := decoder.Decode(&extra); err != io.EOF {
-		return fmt.Errorf("expected exactly one JSON offer")
+	offer, err := decodeOffer(input)
+	if err != nil {
+		return err
 	}
 	reporter := &localReporter{encoder: json.NewEncoder(output)}
 	engine := containerengine.New(checker)
@@ -90,18 +97,28 @@ func run(ctx context.Context, path string, input io.Reader, output io.Writer, wo
 	return manager.Wait(ctx)
 }
 
-// localReporter writes lease events as JSON lines. Serve mode reports from
-// several goroutines, so writes are serialized.
-type localReporter struct {
-	mu      sync.Mutex
-	encoder *json.Encoder
+func decodeOffer(input io.Reader) (lease.Offer, error) {
+	var offer lease.Offer
+	contents, err := io.ReadAll(io.LimitReader(input, 64*1024+1))
+	if err != nil {
+		return offer, fmt.Errorf("read offer: %w", err)
+	}
+	if len(contents) > 64*1024 {
+		return offer, fmt.Errorf("offer exceeds 64 KiB limit")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(contents))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&offer); err != nil {
+		return offer, fmt.Errorf("decode offer: %w", err)
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		return offer, fmt.Errorf("expected exactly one JSON offer")
+	}
+	return offer, nil
 }
 
-func (reporter *localReporter) encode(event map[string]any) error {
-	reporter.mu.Lock()
-	defer reporter.mu.Unlock()
-	return reporter.encoder.Encode(event)
-}
+type localReporter struct{ encoder *json.Encoder }
 
 func (reporter *localReporter) ReportAccepted(_ context.Context, id string) error {
 	return reporter.encode(map[string]any{"type": "accepted", "lease_id": id})
