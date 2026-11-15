@@ -78,7 +78,17 @@ func (manager *Manager) ReceiveOffer(ctx context.Context, offer Offer) error {
 
 	launchCtx, cancel := context.WithDeadline(ctx, offer.ExpiresAt)
 	defer cancel()
-	workload, err := manager.engine.Launch(launchCtx, offer.ImageDigest)
+	var workload Workload
+	if offer.Request != nil {
+		requestEngine, supportsRequest := manager.engine.(RequestContainerEngine)
+		if !supportsRequest {
+			err = errors.New("container engine does not support inference requests")
+		} else {
+			workload, err = requestEngine.LaunchRequest(launchCtx, offer.ImageDigest, offer.Request)
+		}
+	} else {
+		workload, err = manager.engine.Launch(launchCtx, offer.ImageDigest)
+	}
 	if err != nil {
 		launchErr := fmt.Errorf("launch lease workload: %w", err)
 		if workload != nil {

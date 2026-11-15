@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node/internal/allowlist"
+	"github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node/internal/lease"
 )
 
 var testDigest = "sha256:" + strings.Repeat("a", 64)
@@ -84,6 +85,65 @@ func TestLaunchIsolationAndWait(t *testing.T) {
 	name := strings.TrimPrefix(create[1], "--name=")
 	if !reflect.DeepEqual(calls[5], []string{"rm", "--force", "--ignore", "--time=0", "--", name}) {
 		t.Fatalf("cleanup = %v", calls[5])
+	}
+}
+
+func TestLaunchRequestUsesInferenceWorkspaceAndOllamaPolicy(t *testing.T) {
+	engine := testEngine(t)
+	var calls [][]string
+	engine.run = func(_ context.Context, args ...string) (string, error) {
+		calls = append(calls, args)
+		switch args[0] {
+		case "info":
+			return "true\n", nil
+		case "wait":
+			return "0\n", nil
+		default:
+			return "", nil
+		}
+	}
+
+	request := &lease.InferenceRequest{Prompt: "hello"}
+	workload, err := engine.LaunchRequest(context.Background(), testDigest, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owned, ok := workload.(*Workload)
+	if !ok || owned.workspace == nil {
+		t.Fatalf("workload workspace = %#v", owned)
+	}
+	workspaceRoot := owned.workspace.Root()
+	contents, err := os.ReadFile(owned.workspace.RequestPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(contents), `"prompt":"hello"`) {
+		t.Fatalf("request = %s", contents)
+	}
+
+	if _, err := workload.Wait(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(workspaceRoot); !os.IsNotExist(err) {
+		t.Fatalf("workspace was not removed: %v", err)
+	}
+
+	create := calls[2]
+	for _, flag := range []string{
+		"--memory=2g", "--memory-swap=2g",
+		"--volume=ollama-models:/models:ro",
+		"--volume=" + filepath.Join(workspaceRoot, "input") + ":/job/input:ro",
+		"--volume=" + filepath.Join(workspaceRoot, "output") + ":/job/output:rw",
+	} {
+		found := false
+		for _, arg := range create {
+			if arg == flag {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("missing curated workload flag %s", flag)
+		}
 	}
 }
 

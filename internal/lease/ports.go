@@ -18,6 +18,13 @@ type ContainerEngine interface {
 	Launch(ctx context.Context, imageDigest string) (Workload, error)
 }
 
+// RequestContainerEngine launches a curated workload with its validated
+// inference request. Engines that implement this optional interface own the
+// request workspace and its cleanup.
+type RequestContainerEngine interface {
+	LaunchRequest(ctx context.Context, imageDigest string, request *InferenceRequest) (Workload, error)
+}
+
 // Coordinator reports node-side lease decisions and outcomes.
 type Coordinator interface {
 	ReportAccepted(ctx context.Context, leaseID string) error

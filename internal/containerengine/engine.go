@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node/internal/allowlist"
+	"github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node/internal/jobworkspace"
 	"github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node/internal/lease"
 )
 
@@ -35,10 +36,48 @@ func New(checker *allowlist.Checker) *Engine {
 // transports, short-name resolution and command-line options at this boundary.
 var referencePattern = regexp.MustCompile(`^(localhost|[a-z0-9]+([.-][a-z0-9]+)+)(:[0-9]+)?/[a-z0-9]+([._-][a-z0-9]+)*(/[a-z0-9]+([._-][a-z0-9]+)*)*@sha256:[a-f0-9]{64}$`)
 
+const modelVolume = "ollama-models"
+
 // Launch pulls the approved image, creates an isolated container, then starts it.
 // A deadline limits container lifetime via conmon even if the agent exits.
 // Without a deadline the maximum runtime is one hour.
 func (engine *Engine) Launch(ctx context.Context, digest string) (lease.Workload, error) {
+	return engine.launch(ctx, digest, nil, "512m")
+}
+
+// LaunchRequest runs a curated inference workload with its provider-owned
+// request workspace and the larger resource policy required by Ollama.
+func (engine *Engine) LaunchRequest(
+	ctx context.Context,
+	digest string,
+	request *lease.InferenceRequest,
+) (lease.Workload, error) {
+	if request == nil {
+		return nil, errors.New("inference request is required")
+	}
+	workspace, err := jobworkspace.New("")
+	if err != nil {
+		return nil, err
+	}
+	if err := workspace.WriteRequest(*request); err != nil {
+		_ = workspace.Remove()
+		return nil, err
+	}
+	return engine.launch(ctx, digest, workspace, "2g")
+}
+
+func (engine *Engine) launch(
+	ctx context.Context,
+	digest string,
+	workspace *jobworkspace.Workspace,
+	memory string,
+) (lease.Workload, error) {
+	retainWorkspace := false
+	defer func() {
+		if !retainWorkspace && workspace != nil {
+			_ = workspace.Remove()
+		}
+	}()
 	if engine.allowlist == nil {
 		return nil, errors.New("image allowlist is required")
 	}
@@ -65,7 +104,11 @@ func (engine *Engine) Launch(ctx context.Context, digest string) (lease.Workload
 	if _, err := rand.Read(random[:]); err != nil {
 		return nil, fmt.Errorf("generate container name: %w", err)
 	}
-	workload := &Workload{engine: engine, name: "compute-node-" + hex.EncodeToString(random[:])}
+	workload := &Workload{
+		engine:    engine,
+		name:      "compute-node-" + hex.EncodeToString(random[:]),
+		workspace: workspace,
+	}
 	lifetime := time.Hour
 	if deadline, ok := ctx.Deadline(); ok {
 		lifetime = min(lifetime, time.Until(deadline))
@@ -81,9 +124,16 @@ func (engine *Engine) Launch(ctx context.Context, digest string) (lease.Workload
 		"--pid=private", "--ipc=private", "--uts=private",
 		"--read-only", "--read-only-tmpfs=false", "--image-volume=ignore",
 		"--tmpfs=/tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777",
-		"--pids-limit=128", "--cpus=1", "--memory=512m", "--memory-swap=512m",
+		"--pids-limit=128", "--cpus=1", "--memory=" + memory, "--memory-swap=" + memory,
 		"--ulimit=nofile=1024:1024", "--http-proxy=false",
 		"--health-cmd=none", "--timeout=" + strconv.Itoa(seconds)}
+	if workspace != nil {
+		args = append(args,
+			"--volume="+modelVolume+":/models:ro",
+			"--volume="+workspace.InputDir()+":/job/input:ro",
+			"--volume="+workspace.OutputDir()+":/job/output:rw",
+		)
+	}
 	if engine.Output == nil {
 		args = append(args, "--log-driver=none")
 	} else {
@@ -102,13 +152,15 @@ func (engine *Engine) Launch(ctx context.Context, digest string) (lease.Workload
 		}
 		return nil, err
 	}
+	retainWorkspace = true
 	return workload, nil
 }
 
 // Workload owns a named container. Exit metadata is retained until Wait or Kill.
 type Workload struct {
-	engine *Engine
-	name   string
+	engine    *Engine
+	name      string
+	workspace *jobworkspace.Workspace
 }
 
 // Wait returns the container's exit code (including nonzero job exits), then
@@ -135,6 +187,9 @@ func (workload *Workload) Wait(ctx context.Context) (int, error) {
 // Kill force-removes only this workload; repeat calls are harmless.
 func (workload *Workload) Kill(ctx context.Context) error {
 	_, err := workload.engine.run(ctx, "rm", "--force", "--ignore", "--time=0", "--", workload.name)
+	if err == nil && workload.workspace != nil {
+		err = workload.workspace.Remove()
+	}
 	return err
 }
 
