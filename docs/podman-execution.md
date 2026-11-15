@@ -37,6 +37,18 @@ go build -o /tmp/node-agent ./cmd/node-agent
 /tmp/node-agent -allowlist /path/to/allowlist.json < /path/to/offer.json
 ```
 
+For the interactive configuration menu, run:
+
+```sh
+/tmp/node-agent -interactive
+```
+
+Set the allowlist path and an offer JSON file, optionally inspect or manually
+enter machine specs, then choose `s` to execute. The menu also supports bounded
+container output. Machine specs are informational and do not enable GPU
+passthrough or alter the container policy. The menu uses stdin and prints to
+stdout; scripted JSON event consumers should use the noninteractive command.
+
 An allowlist file has this form (replace the placeholder with the actual approved
 64-character lowercase SHA-256 digest):
 

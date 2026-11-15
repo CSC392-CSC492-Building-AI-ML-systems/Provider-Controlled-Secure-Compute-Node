@@ -2,6 +2,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"flag"
@@ -20,14 +21,32 @@ import (
 func main() {
 	allowlistPath := flag.String("allowlist", "", "provider-owned JSON allowlist file (required)")
 	showOutput := flag.Bool("show-output", false, "print bounded container logs to stderr after exit")
+	interactive := flag.Bool("interactive", false, "configure a local workload through the interactive menu")
 	flag.Parse()
+	var input io.Reader = os.Stdin
+	if *interactive {
+		cfg, err := promptConfig(bufio.NewReader(os.Stdin), Config{Allowlist: *allowlistPath, ShowOutput: *showOutput})
+		if err != nil {
+			if err.Error() == "quit" {
+				return
+			}
+			log.Fatal(err)
+		}
+		offerFile, err := os.Open(cfg.OfferPath)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer offerFile.Close()
+		input = offerFile
+		*allowlistPath, *showOutput = cfg.Allowlist, cfg.ShowOutput
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	var workloadOutput io.Writer
 	if *showOutput {
 		workloadOutput = os.Stderr
 	}
-	if err := run(ctx, *allowlistPath, os.Stdin, os.Stdout, workloadOutput); err != nil {
+	if err := run(ctx, *allowlistPath, input, os.Stdout, workloadOutput); err != nil {
 		log.Fatal(err)
 	}
 }
