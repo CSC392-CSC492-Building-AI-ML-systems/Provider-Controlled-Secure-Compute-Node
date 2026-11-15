@@ -68,6 +68,9 @@ type Active struct {
 type InferenceRequest struct {
 	Prompt  string            `json:"prompt"`
 	Options *InferenceOptions `json:"options,omitempty"`
+	// RequireGPU is provider execution policy and is intentionally not part of
+	// the request file exposed to the container.
+	RequireGPU bool `json:"-"`
 }
 
 // InferenceOptions contains the bounded generation settings accepted by the

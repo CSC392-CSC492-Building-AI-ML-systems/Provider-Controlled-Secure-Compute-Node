@@ -62,7 +62,9 @@ The container runs as UID/GID `65534:65534`. The node agent must make
 The whole file may be at most 16 KiB and must contain exactly one JSON object.
 Unknown fields are rejected. In particular, a request cannot choose a model,
 replace the system prompt or template, or pass other Ollama options. The model
-is fixed by the image.
+is fixed by the image. GPU selection is provider execution policy; it is not a
+field in this request file. When the provider requires a GPU, it passes the
+NVIDIA CDI device and `OLLAMA_JOB_REQUIRE_GPU=1` when creating the container.
 
 ## Response
 

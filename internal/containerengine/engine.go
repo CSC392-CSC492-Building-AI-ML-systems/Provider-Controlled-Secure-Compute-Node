@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node/internal/allowlist"
+	"github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node/internal/capability"
 	"github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node/internal/jobworkspace"
 	"github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node/internal/lease"
 )
@@ -26,10 +27,11 @@ type Engine struct {
 	Output    io.Writer
 	allowlist *allowlist.Checker
 	run       func(context.Context, ...string) (string, error)
+	cdiReady  func(context.Context) (bool, error)
 }
 
 func New(checker *allowlist.Checker) *Engine {
-	return &Engine{allowlist: checker, run: runPodman}
+	return &Engine{allowlist: checker, run: runPodman, cdiReady: detectCDIReady}
 }
 
 // Require an explicit registry and an untagged repository; disallow alternate
@@ -42,7 +44,7 @@ const modelVolume = "ollama-models"
 // A deadline limits container lifetime via conmon even if the agent exits.
 // Without a deadline the maximum runtime is one hour.
 func (engine *Engine) Launch(ctx context.Context, digest string) (lease.Workload, error) {
-	return engine.launch(ctx, digest, nil, "512m")
+	return engine.launch(ctx, digest, nil, "512m", false)
 }
 
 // LaunchRequest runs a curated inference workload with its provider-owned
@@ -63,7 +65,7 @@ func (engine *Engine) LaunchRequest(
 		_ = workspace.Remove()
 		return nil, err
 	}
-	return engine.launch(ctx, digest, workspace, "2g")
+	return engine.launch(ctx, digest, workspace, "2g", request.RequireGPU)
 }
 
 func (engine *Engine) launch(
@@ -71,6 +73,7 @@ func (engine *Engine) launch(
 	digest string,
 	workspace *jobworkspace.Workspace,
 	memory string,
+	requireGPU bool,
 ) (lease.Workload, error) {
 	retainWorkspace := false
 	defer func() {
@@ -90,6 +93,18 @@ func (engine *Engine) launch(
 	}
 	setupCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
+	if requireGPU {
+		if engine.cdiReady == nil {
+			return nil, errors.New("refusing to launch: CDI detection is not configured")
+		}
+		available, err := engine.cdiReady(setupCtx)
+		if err != nil {
+			return nil, fmt.Errorf("check NVIDIA CDI availability: %w", err)
+		}
+		if !available {
+			return nil, errors.New("refusing to launch: NVIDIA CDI device is unavailable")
+		}
+	}
 	rootless, err := engine.run(setupCtx, "info", "--format", "{{.Host.Security.Rootless}}")
 	if err != nil {
 		return nil, err
@@ -133,6 +148,9 @@ func (engine *Engine) launch(
 			"--volume="+workspace.InputDir()+":/job/input:ro",
 			"--volume="+workspace.OutputDir()+":/job/output:rw",
 		)
+	}
+	if requireGPU {
+		args = append(args, "--device=nvidia.com/gpu=all", "--env=OLLAMA_JOB_REQUIRE_GPU=1")
 	}
 	if engine.Output == nil {
 		args = append(args, "--log-driver=none")
@@ -223,4 +241,12 @@ func runPodman(ctx context.Context, args ...string) (string, error) {
 		return "", fmt.Errorf("podman %s: %w: %s", args[0], errors.Join(ctx.Err(), err), strings.TrimSpace(stderr.String()))
 	}
 	return stdout.String(), nil
+}
+
+func detectCDIReady(ctx context.Context) (bool, error) {
+	runtimes, err := capability.DetectRuntimes(ctx)
+	if err != nil {
+		return false, err
+	}
+	return runtimes.CDI.Available, nil
 }

@@ -147,6 +147,60 @@ func TestLaunchRequestUsesInferenceWorkspaceAndOllamaPolicy(t *testing.T) {
 	}
 }
 
+func TestLaunchRequestAddsNVIDIACDIWhenGPUIsRequired(t *testing.T) {
+	engine := testEngine(t)
+	engine.cdiReady = func(context.Context) (bool, error) { return true, nil }
+	var create []string
+	engine.run = func(_ context.Context, args ...string) (string, error) {
+		if args[0] == "create" {
+			create = append([]string(nil), args...)
+		}
+		if args[0] == "info" {
+			return "true", nil
+		}
+		if args[0] == "wait" {
+			return "0", nil
+		}
+		return "", nil
+	}
+
+	request := &lease.InferenceRequest{Prompt: "hello", RequireGPU: true}
+	workload, err := engine.LaunchRequest(context.Background(), testDigest, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := workload.Wait(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"--device=nvidia.com/gpu=all", "--env=OLLAMA_JOB_REQUIRE_GPU=1"} {
+		found := false
+		for _, arg := range create {
+			if arg == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("missing GPU flag %s in %v", want, create)
+		}
+	}
+}
+
+func TestLaunchRequestRefusesGPUWithoutCDI(t *testing.T) {
+	engine := testEngine(t)
+	engine.cdiReady = func(context.Context) (bool, error) { return false, nil }
+	engine.run = func(context.Context, ...string) (string, error) {
+		t.Fatal("called Podman before CDI validation")
+		return "", nil
+	}
+	_, err := engine.LaunchRequest(context.Background(), testDigest, &lease.InferenceRequest{
+		Prompt:     "hello",
+		RequireGPU: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "NVIDIA CDI device is unavailable") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestLaunchFailures(t *testing.T) {
 	failure := errors.New("runtime failed")
 	for _, stage := range []string{"info", "rootful", "pull", "create", "start", "cleanup"} {
