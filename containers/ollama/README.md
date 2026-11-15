@@ -211,6 +211,27 @@ The entrypoint uses `exec`, so Ollama receives the stop signal directly and
 can shut down cleanly. The model remains in the `ollama-models` volume for the
 next run.
 
+## Smoke test
+
+On a Linux host with rootless Podman, `curl` and `jq`, run from the
+repository root:
+
+```sh
+containers/ollama/smoke-test.sh
+```
+
+It builds the image, provisions the model, and then checks both modes using
+the node agent's container restrictions:
+
+- `serve` mode passes its health check, `/api/tags` lists only
+  `tinyllama:1.1b`, `/api/generate` returns text, and `podman stop` shuts
+  Ollama down without a forced kill;
+- `job` mode completes a valid request with a nonempty response, and rejects a
+  malformed request and a request that tries to choose a model.
+
+It removes its containers and job files and exits nonzero on the first failed
+check. Set `SKIP_BUILD=1` to test an image you have already built.
+
 ## Develop the job runner
 
 The job runner is a small Go program with no dependencies outside the
