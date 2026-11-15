@@ -167,6 +167,7 @@ func (manager *Manager) reserveAcceptedOffer(offer Offer) RejectionReason {
 		ID:          offer.ID,
 		ImageDigest: offer.ImageDigest,
 		ExpiresAt:   offer.ExpiresAt,
+		Request:     offer.Request,
 	}
 	manager.state = StateRunning
 	return ""

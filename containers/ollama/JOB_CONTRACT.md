@@ -151,5 +151,6 @@ so the engine can be integrated with this image later:
   above, and delete it after the job.
 - Allow at least 2 GB of memory; TinyLlama does not fit in 512 MB.
 - Pass the GPU device when GPU inference is wanted (see the README).
-- Carry the prompt in the lease, or fetch it from the coordinator. The current
-  lease offer only contains an ID, an image digest and an expiry time.
+- Carry the validated inference request in the lease, or fetch it from the
+  coordinator. The node-side lease model now has a request field; coordinator
+  transport and Podman mount integration still need to populate and consume it.
