@@ -1,6 +1,10 @@
 // Command ollama-job runs one inference job against the approved model and
 // exits. See containers/ollama/JOB_CONTRACT.md for the input, output and exit
 // codes.
+//
+// `ollama-job verify-model` only checks the model volume against the pinned
+// manifest and exits 0 (verified), 10 (not provisioned) or 20 (unapproved or
+// modified). The shell scripts call it through verify-approved-model.
 package main
 
 import (
@@ -13,9 +17,14 @@ import (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "verify-model" {
+		os.Exit(verifyModelCommand(os.Args[2:]))
+	}
+
 	requestPath := flag.String("request", "/job/input/request.json", "request file")
 	outputDir := flag.String("output", "/job/output", "directory that receives response.json")
-	verifyPath := flag.String("verify", "/usr/local/bin/verify-approved-model", "model verification command")
+	approvedConfig := flag.String("approved-model", defaultApprovedModelConfig, "approved model configuration")
+	modelRoot := flag.String("models", defaultModelRoot, "model directory")
 	ollamaPath := flag.String("ollama", "/bin/ollama", "ollama executable")
 	host := flag.String("host", "127.0.0.1:11434", "loopback address for the internal Ollama server")
 	startTimeout := flag.Duration("start-timeout", 60*time.Second, "time allowed for Ollama to become ready")
@@ -36,7 +45,7 @@ func main() {
 			jobTimeout:   *jobTimeout,
 			requireGPU:   os.Getenv("OLLAMA_JOB_REQUIRE_GPU") == "1",
 		},
-		verify: verifyCommand(*verifyPath),
+		verify: func(context.Context) int { return verifyApprovedModel(*approvedConfig, *modelRoot, os.Stderr) },
 		start:  func() (server, error) { return startServer(*ollamaPath, *host) },
 		client: newOllamaClient("http://" + *host),
 		stderr: os.Stderr,
@@ -44,4 +53,14 @@ func main() {
 	code := r.run(ctx)
 	stop()
 	os.Exit(code)
+}
+
+func verifyModelCommand(args []string) int {
+	flags := flag.NewFlagSet("verify-model", flag.ContinueOnError)
+	approvedConfig := flags.String("approved-model", defaultApprovedModelConfig, "approved model configuration")
+	modelRoot := flags.String("models", defaultModelRoot, "model directory")
+	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
+		return verifyInvalid
+	}
+	return verifyApprovedModel(*approvedConfig, *modelRoot, os.Stderr)
 }

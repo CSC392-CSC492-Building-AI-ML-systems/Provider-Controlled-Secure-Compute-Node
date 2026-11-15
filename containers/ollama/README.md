@@ -53,12 +53,17 @@ That rebuild changes the image digest.
 
 The model is stored in the named Podman volume `ollama-models`, not copied
 into the image. The volume is mounted read-only while the service runs, so a
-request cannot save a different model into it. Startup hashes every file the
-model's manifest refers to (weights, prompt template, system prompt,
-parameters and config) with SHA-256, and rejects a missing model, a digest
-mismatch, a manifest that refers to any other file, or any additional model
-manifest, including a symlinked one. All five digests are pinned in
-`approved-model.env`.
+request cannot save a different model into it.
+
+`approved-model.env` pins the model's entire manifest: every entry's role
+(media type), digest and size, in order. At startup the job runner
+(`ollama-job verify-model`) decodes the installed manifest as JSON, the same
+way Ollama reads it, and requires its entries to match exactly. Duplicate or
+unknown JSON keys are rejected, so no other parser can read the manifest
+differently. It then hashes every referenced file (config, weights, prompt
+template, system prompt and parameters) with SHA-256. It rejects a missing
+model, an added, removed, reordered or reassigned layer, a size or digest
+mismatch, and any additional model manifest, including a symlinked one.
 
 ## Current scope
 

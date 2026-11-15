@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
 )
@@ -37,31 +36,12 @@ type config struct {
 
 type runner struct {
 	config config
-	// verify runs the model check and returns its exit status.
+	// verify checks the model volume and returns verifyOK, verifyMissing
+	// or verifyInvalid.
 	verify func(ctx context.Context) int
 	start  func() (server, error)
 	client *ollamaClient
 	stderr io.Writer
-}
-
-// verifyCommand runs verify-approved-model, whose exit status 10 means the
-// model is missing and any other failure means it is invalid.
-func verifyCommand(path string) func(ctx context.Context) int {
-	return func(ctx context.Context) int {
-		cmd := exec.CommandContext(ctx, path)
-		cmd.Stdout = os.Stderr
-		cmd.Stderr = os.Stderr
-		err := cmd.Run()
-		if err == nil {
-			return 0
-		}
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) && exitErr.ExitCode() > 0 {
-			return exitErr.ExitCode()
-		}
-		fmt.Fprintf(os.Stderr, "could not run model verification: %v\n", err)
-		return exitModelInvalid
-	}
 }
 
 func (r *runner) run(ctx context.Context) int {
