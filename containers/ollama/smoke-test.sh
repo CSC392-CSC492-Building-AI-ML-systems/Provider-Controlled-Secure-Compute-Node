@@ -14,6 +14,8 @@
 #   OLLAMA_IMAGE     image to build and test (default localhost/provider-node-ollama:0.3.0)
 #   OLLAMA_VOLUME    model volume (default ollama-models)
 #   SMOKE_PORT       host port for serve mode (default 11435)
+#   SMOKE_GPU=1      pass the NVIDIA GPU through CDI and fail if inference
+#                    does not run entirely on the GPU
 #
 # Exits nonzero as soon as any check fails.
 
@@ -58,6 +60,15 @@ restricted=(
     --pids-limit=128 --memory=2g --memory-swap=2g --cpus=2
     --volume="${volume}:/models:ro,Z"
 )
+
+gpu=${SMOKE_GPU:-0}
+if [[ $gpu == 1 ]]; then
+    # Confirms Podman can resolve the CDI device before the real tests run.
+    podman --remote=false run --rm --device=nvidia.com/gpu=all --entrypoint=/bin/true "$image" ||
+        fail "SMOKE_GPU=1 needs the NVIDIA Container Toolkit and CDI specs; see README.md"
+    # OLLAMA_JOB_REQUIRE_GPU makes job mode fail with exit code 32 on CPU fallback.
+    restricted+=(--device=nvidia.com/gpu=all --env=OLLAMA_JOB_REQUIRE_GPU=1)
+fi
 
 if [[ ${SKIP_BUILD:-0} != 1 ]]; then
     step "Building $image"
@@ -108,6 +119,14 @@ generated=$(curl --fail --silent --show-error --max-time 300 \
     fail "/api/generate returned an empty response: $generated"
 echo "/api/generate returned text."
 
+if [[ $gpu == 1 ]]; then
+    loaded=$(curl --fail --silent --show-error "http://127.0.0.1:${port}/api/ps")
+    jq -e --arg model "$model" \
+        '[.models[] | select(.name == $model) | .size_vram >= .size and .size > 0] == [true]' \
+        <<<"$loaded" >/dev/null || fail "model is not fully loaded on the GPU: $loaded"
+    echo "Model is loaded on the GPU."
+fi
+
 step "Stopping serve mode"
 podman --remote=false stop --time 10 "$name" >/dev/null
 code=$(podman --remote=false inspect --format '{{.State.ExitCode}}' "$name")
@@ -147,7 +166,11 @@ run_job valid '{"prompt":"Say hello in one short sentence.","options":{"num_pred
 jq -e --arg model "$model" \
     '.status == "ok" and .model == $model and (.response | test("\\S")) and (.processor | type == "string")' \
     "$job_output" >/dev/null || fail "unexpected valid-job response: $(cat "$job_output")"
-echo "Job succeeded on processor $(jq -r .processor "$job_output")."
+processor=$(jq -r .processor "$job_output")
+if [[ $gpu == 1 && $processor != gpu ]]; then
+    fail "job ran on processor $processor, want gpu"
+fi
+echo "Job succeeded on processor $processor."
 
 step "Job mode: malformed request"
 run_job malformed '{"prompt": '

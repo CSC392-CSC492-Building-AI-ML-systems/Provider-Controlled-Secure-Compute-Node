@@ -89,6 +89,9 @@ is fixed by the image.
   and `truncated` is `true`.
 - `done_reason` is Ollama's reason for stopping, such as `stop` or `length`.
 - `processor` is `gpu`, `cpu`, `partial` (split between both) or `unknown`.
+  When the container is started with `OLLAMA_JOB_REQUIRE_GPU=1`, anything
+  other than `gpu` fails the job with `gpu_unavailable`, and the
+  CPU-generated text is not returned.
 
 On failure:
 

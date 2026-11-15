@@ -19,6 +19,7 @@ const (
 	exitModelInvalid      = 20
 	exitServerStartFailed = 30
 	exitInferenceFailed   = 31
+	exitGPUUnavailable    = 32
 	exitOutputFailed      = 40
 	exitCancelled         = 143
 )
@@ -29,6 +30,9 @@ type config struct {
 	outputDir    string
 	startTimeout time.Duration
 	jobTimeout   time.Duration
+	// requireGPU fails the job instead of returning output that was
+	// generated on the CPU, so a CPU fallback is never silent.
+	requireGPU bool
 }
 
 type runner struct {
@@ -115,6 +119,11 @@ func (r *runner) run(ctx context.Context) int {
 		return r.fail("inference_failed", "model returned an empty response", exitInferenceFailed)
 	}
 
+	processor := r.client.processor(ctx, r.config.model)
+	if r.config.requireGPU && processor != "gpu" {
+		return r.fail("gpu_unavailable", "a GPU is required but the model ran on processor "+processor, exitGPUUnavailable)
+	}
+
 	text, truncated := truncateUTF8(result.Response, maxResponseBytes)
 	response := successResponse{
 		Status:     "ok",
@@ -122,7 +131,7 @@ func (r *runner) run(ctx context.Context) int {
 		Response:   text,
 		DoneReason: result.DoneReason,
 		Truncated:  truncated,
-		Processor:  r.client.processor(ctx, r.config.model),
+		Processor:  processor,
 		Metrics: metrics{
 			PromptTokens:     result.PromptEvalCount,
 			CompletionTokens: result.EvalCount,

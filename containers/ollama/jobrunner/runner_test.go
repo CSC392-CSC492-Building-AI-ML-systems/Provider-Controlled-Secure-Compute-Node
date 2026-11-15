@@ -327,3 +327,37 @@ func TestServerEnvPinsSettings(t *testing.T) {
 		}
 	}
 }
+
+func TestRunRequireGPU(t *testing.T) {
+	tests := map[string]struct {
+		sizeVRAM int64
+		wantExit int
+	}{
+		"model on gpu": {sizeVRAM: 1000, wantExit: exitOK},
+		"model on cpu": {sizeVRAM: 0, wantExit: exitGPUUnavailable},
+		"model split":  {sizeVRAM: 400, wantExit: exitGPUUnavailable},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t, `{"prompt":"hi"}`)
+			h.runner.config.requireGPU = true
+			h.ollama.sizeVRAM = test.sizeVRAM
+			if code := h.runner.run(context.Background()); code != test.wantExit {
+				t.Fatalf("exit code = %d, want %d", code, test.wantExit)
+			}
+			response := h.response(t)
+			if test.wantExit == exitOK {
+				if response["processor"] != "gpu" {
+					t.Fatalf("response = %v", response)
+				}
+				return
+			}
+			if got := errorCode(response); got != "gpu_unavailable" {
+				t.Fatalf("error code = %q", got)
+			}
+			if _, ok := response["response"]; ok {
+				t.Fatal("CPU-generated text was returned although a GPU was required")
+			}
+		})
+	}
+}

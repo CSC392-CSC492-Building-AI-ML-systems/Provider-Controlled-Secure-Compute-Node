@@ -69,8 +69,9 @@ dropped and no network. `HOME` points at `/tmp`, Ollama does not prune the
 read-only model volume, and provisioning makes the model files readable by
 that user.
 
-GPU passthrough is not configured yet. The model is not downloaded during
-`podman build`.
+GPU inference is opt-in: pass the GPU with a CDI device (see
+[GPU inference](#gpu-inference)). Without one, Ollama runs on the CPU. The
+model is not downloaded during `podman build`.
 
 ## Requirements
 
@@ -210,6 +211,70 @@ podman stop provider-node-ollama
 The entrypoint uses `exec`, so Ollama receives the stop signal directly and
 can shut down cleanly. The model remains in the `ollama-models` volume for the
 next run.
+
+## GPU inference
+
+Only NVIDIA GPUs are supported. The Ollama base image already contains the
+CUDA libraries; the host provides the driver and exposes the GPU to rootless
+Podman through the Container Device Interface (CDI). This has to be set up
+and tested on the Linux provider node itself. A Mac cannot pass its GPU to a
+Podman container.
+
+### Host setup (Ubuntu, once, as an administrator)
+
+1. Install the NVIDIA driver and confirm `nvidia-smi` works on the host.
+2. Install the NVIDIA Container Toolkit by following NVIDIA's instructions
+   for adding its apt repository, then:
+
+   ```sh
+   sudo apt-get install -y nvidia-container-toolkit
+   ```
+
+3. Generate the CDI specification and list the devices it defines:
+
+   ```sh
+   sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
+   nvidia-ctk cdi list
+   ```
+
+   The list should include `nvidia.com/gpu=0` and `nvidia.com/gpu=all`.
+   Regenerate the file after every driver upgrade.
+
+Podman 4.1 or newer reads `/etc/cdi` automatically. No change to the
+container's capabilities or privileges is needed.
+
+### Run with a GPU
+
+Pass only the GPU the job is assigned, and set `OLLAMA_JOB_REQUIRE_GPU=1` so
+the job fails with exit code 32 (`gpu_unavailable`) instead of quietly
+running on the CPU:
+
+```sh
+podman run --rm \
+  --device nvidia.com/gpu=0 \
+  --env OLLAMA_JOB_REQUIRE_GPU=1 \
+  ...the other options from "Run one inference job"... \
+  localhost/provider-node-ollama:0.3.0
+```
+
+Without `OLLAMA_JOB_REQUIRE_GPU`, the job still reports where it ran in the
+`processor` field of `response.json`: `gpu`, `cpu`, `partial` or `unknown`.
+
+To run the smoke test with the GPU:
+
+```sh
+SMOKE_GPU=1 containers/ollama/smoke-test.sh
+```
+
+### Troubleshooting
+
+| Symptom | Likely cause and fix |
+| --- | --- |
+| `unresolvable CDI devices nvidia.com/gpu=0` | The CDI spec is missing or stale. Rerun `nvidia-ctk cdi generate` and check `nvidia-ctk cdi list`. |
+| `processor` is `cpu`, or exit code 32 | Ollama could not use the GPU. Check the container log for its GPU discovery messages, and check that `nvidia-smi` works on the host. |
+| `processor` is `partial` | The model did not fit in free GPU memory. Check other processes in `nvidia-smi`. |
+| `nvidia-smi` fails on the host after an update | The driver and kernel module versions differ. Reboot, then regenerate the CDI spec. |
+| Permission denied on `/dev/nvidia*` | The device nodes must be readable and writable by all users (mode `0666`), which is the driver's default. |
 
 ## Smoke test
 

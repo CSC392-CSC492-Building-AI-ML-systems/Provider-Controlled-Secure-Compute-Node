@@ -34,6 +34,7 @@ func main() {
 			outputDir:    *outputDir,
 			startTimeout: *startTimeout,
 			jobTimeout:   *jobTimeout,
+			requireGPU:   os.Getenv("OLLAMA_JOB_REQUIRE_GPU") == "1",
 		},
 		verify: verifyCommand(*verifyPath),
 		start:  func() (server, error) { return startServer(*ollamaPath, *host) },
