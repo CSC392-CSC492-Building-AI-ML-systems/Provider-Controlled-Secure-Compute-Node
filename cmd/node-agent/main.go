@@ -118,7 +118,19 @@ func decodeOffer(input io.Reader) (lease.Offer, error) {
 	return offer, nil
 }
 
-type localReporter struct{ encoder *json.Encoder }
+type localReporter struct {
+	encoder *json.Encoder
+	mu      sync.Mutex
+}
+
+func (reporter *localReporter) encode(event any) error {
+	if reporter.encoder == nil {
+		return errors.New("local reporter encoder is not configured")
+	}
+	reporter.mu.Lock()
+	defer reporter.mu.Unlock()
+	return reporter.encoder.Encode(event)
+}
 
 func (reporter *localReporter) ReportAccepted(_ context.Context, id string) error {
 	return reporter.encode(map[string]any{"type": "accepted", "lease_id": id})
