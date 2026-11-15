@@ -24,6 +24,9 @@ set -e
 
 case "$status" in
     0)
+        # Volumes provisioned by older images may not be readable by the
+        # unprivileged inference user yet.
+        chmod -R a+rX,go-w "$OLLAMA_MODELS"
         echo "Approved model ${APPROVED_MODEL} is already provisioned."
         exit 0
         ;;
@@ -108,5 +111,10 @@ if [ "$status" -ne 0 ]; then
     remove_downloaded_files
     exit "$status"
 fi
+
+# Inference containers run as UID 65534 in their own user namespace, so they
+# see these files as owned by another user. Make the model readable (but not
+# writable) by everyone. The model is public, so this exposes nothing secret.
+chmod -R a+rX,go-w "$OLLAMA_MODELS"
 
 echo "Verified approved model ${APPROVED_MODEL}."

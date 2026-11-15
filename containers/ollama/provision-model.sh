@@ -11,7 +11,7 @@ if [ "$#" -ne 0 ]; then
     exit 2
 fi
 
-image="${OLLAMA_IMAGE:-localhost/provider-node-ollama:0.2.0}"
+image="${OLLAMA_IMAGE:-localhost/provider-node-ollama:0.3.0}"
 volume="${OLLAMA_VOLUME:-ollama-models}"
 
 if ! command -v podman >/dev/null 2>&1; then

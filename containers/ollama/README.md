@@ -47,14 +47,27 @@ manifest, including a symlinked one. All five digests are pinned in
 
 ## Current scope
 
-This image:
+The image has two modes, selected by the container command:
 
-- starts `ollama serve`;
-- listens on the container's port `11434`;
-- requires the pinned TinyLlama model before startup;
-- checks model integrity from the model volume; and
-- includes a container health check that confirms Ollama is responding.
-  Model integrity is checked once at startup, not on every health check.
+- **`job` (default)** runs one inference job and exits. The request is read
+  from `/job/input/request.json` and the result is written to
+  `/job/output/response.json`. Ollama listens only on the container's
+  loopback interface, so the container needs no network. This is the mode the
+  node agent uses. The request and response formats, limits and exit codes
+  are defined in [JOB_CONTRACT.md](JOB_CONTRACT.md).
+- **`serve`** runs the Ollama HTTP API on port `11434` until it is stopped.
+  It is meant for local development and manual testing.
+
+Both modes refuse to start Ollama unless the model volume holds exactly the
+pinned TinyLlama model. The image includes a health check that confirms Ollama
+is responding; model integrity is checked once at startup, not on every
+health check.
+
+The image is designed to run the way the node agent runs workloads: as
+UID/GID `65534:65534`, with a read-only root filesystem, all capabilities
+dropped and no network. `HOME` points at `/tmp`, Ollama does not prune the
+read-only model volume, and provisioning makes the model files readable by
+that user.
 
 GPU passthrough is not configured yet. The model is not downloaded during
 `podman build`.
@@ -62,8 +75,8 @@ GPU passthrough is not configured yet. The model is not downloaded during
 ## Requirements
 
 - Podman
-- `curl`, for the host-side readiness check
-- Internet access while provisioning the model
+- `curl`, for the host-side readiness check in `serve` mode
+- Internet access while building the image and provisioning the model
 - About 1 GB of free disk space and 2 GB of available memory
 
 Podman on macOS runs containers inside a Linux virtual machine. This image can
@@ -76,10 +89,13 @@ Run from the repository root:
 
 ```sh
 podman build \
-  --tag localhost/provider-node-ollama:0.2.0 \
+  --tag localhost/provider-node-ollama:0.3.0 \
   --file containers/ollama/Containerfile \
   containers/ollama
 ```
+
+The build compiles the job runner in `jobrunner/` with a digest-pinned Go
+image, then copies the static binary into the Ollama image.
 
 ## Provision the approved model
 
@@ -93,19 +109,68 @@ containers/ollama/provision-model.sh
 ```
 
 This creates the `ollama-models` volume if needed and downloads about 638 MB.
-If the pinned model is already present, the command leaves it unchanged. If a
-different or modified model is already present, it stops without downloading
-anything. If a new download fails partway or fails verification, its files are
-removed so the next provisioning run can try again.
+If the pinned model is already present, the command leaves it unchanged
+except for making it readable by the inference user. If a different or
+modified model is already present, it stops without downloading anything. If
+a new download fails partway or fails verification, its files are removed so
+the next provisioning run can try again.
 
-## Run
+## Run one inference job
+
+Create a job directory. The container user must be able to read the request
+and write to the output directory:
+
+```sh
+job=$(mktemp -d)
+mkdir "$job/input" "$job/output"
+printf '%s\n' '{"prompt": "Explain what a GPU is in one sentence."}' \
+  > "$job/input/request.json"
+chmod 0755 "$job" "$job/input"
+chmod 0644 "$job/input/request.json"
+chmod 0777 "$job/output"
+```
+
+Run the job with the same restrictions the node agent uses:
+
+```sh
+podman run --rm \
+  --user 65534:65534 \
+  --cap-drop ALL \
+  --security-opt no-new-privileges \
+  --network none \
+  --read-only \
+  --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777 \
+  --memory 2g \
+  --pids-limit 128 \
+  --volume ollama-models:/models:ro,Z \
+  --volume "$job/input:/job/input:ro,Z" \
+  --volume "$job/output:/job/output:rw,Z" \
+  localhost/provider-node-ollama:0.3.0
+echo "exit code: $?"
+cat "$job/output/response.json"
+```
+
+The exit code and `response.json` report the outcome; see
+[JOB_CONTRACT.md](JOB_CONTRACT.md). Delete the job directory afterward, since
+it contains the prompt and the response:
+
+```sh
+rm -rf "$job"
+```
+
+## Run the API server (development)
 
 ```sh
 podman run --rm \
   --name provider-node-ollama \
+  --user 65534:65534 \
+  --cap-drop ALL \
+  --security-opt no-new-privileges \
+  --read-only \
+  --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777 \
   --publish 127.0.0.1:11434:11434 \
   --volume ollama-models:/models:ro,Z \
-  localhost/provider-node-ollama:0.2.0
+  localhost/provider-node-ollama:0.3.0 serve
 ```
 
 Binding to `127.0.0.1` prevents the API from being exposed on every host
@@ -115,7 +180,7 @@ from installing another model.
 The container exits before serving requests when the approved model is missing
 or does not match the pinned digest.
 
-## Verify readiness
+### Verify readiness
 
 In another terminal:
 
@@ -134,7 +199,7 @@ podman inspect \
   provider-node-ollama
 ```
 
-## Stop
+### Stop
 
 Press `Ctrl+C` in the terminal running the container, or run:
 
@@ -145,3 +210,14 @@ podman stop provider-node-ollama
 The entrypoint uses `exec`, so Ollama receives the stop signal directly and
 can shut down cleanly. The model remains in the `ollama-models` volume for the
 next run.
+
+## Develop the job runner
+
+The job runner is a small Go program with no dependencies outside the
+standard library. Its tests use a fake Ollama server, so they run without
+Podman or a model:
+
+```sh
+cd containers/ollama/jobrunner
+go test ./...
+```
