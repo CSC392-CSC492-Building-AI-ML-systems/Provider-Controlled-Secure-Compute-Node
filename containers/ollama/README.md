@@ -38,9 +38,12 @@ That rebuild changes the image digest.
 
 The model is stored in the named Podman volume `ollama-models`, not copied
 into the image. The volume is mounted read-only while the service runs, so a
-request cannot save a different model into it. Startup hashes the weight file
-with SHA-256 and rejects a missing model, a digest mismatch, or any additional
-model manifest.
+request cannot save a different model into it. Startup hashes every file the
+model's manifest refers to (weights, prompt template, system prompt,
+parameters and config) with SHA-256, and rejects a missing model, a digest
+mismatch, a manifest that refers to any other file, or any additional model
+manifest, including a symlinked one. All five digests are pinned in
+`approved-model.env`.
 
 ## Current scope
 
@@ -50,7 +53,8 @@ This image:
 - listens on the container's port `11434`;
 - requires the pinned TinyLlama model before startup;
 - checks model integrity from the model volume; and
-- includes a container health check.
+- includes a container health check that confirms Ollama is responding.
+  Model integrity is checked once at startup, not on every health check.
 
 GPU passthrough is not configured yet. The model is not downloaded during
 `podman build`.
@@ -80,7 +84,9 @@ podman build \
 ## Provision the approved model
 
 The provisioning command accepts no model name. It always installs the model
-pinned in the image and checks its weight digest afterward.
+pinned in the image and checks every pinned digest afterward. The
+provisioning container runs with all Linux capabilities dropped and
+`no-new-privileges`.
 
 ```sh
 containers/ollama/provision-model.sh
@@ -89,8 +95,8 @@ containers/ollama/provision-model.sh
 This creates the `ollama-models` volume if needed and downloads about 638 MB.
 If the pinned model is already present, the command leaves it unchanged. If a
 different or modified model is already present, it stops without downloading
-anything. If a new download fails verification, its files are removed so the
-next provisioning run can try again.
+anything. If a new download fails partway or fails verification, its files are
+removed so the next provisioning run can try again.
 
 ## Run
 
