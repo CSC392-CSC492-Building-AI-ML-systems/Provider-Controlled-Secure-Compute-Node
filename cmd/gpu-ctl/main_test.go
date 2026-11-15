@@ -176,6 +176,10 @@ func TestRunRefusesBadChoices(t *testing.T) {
 		{"run", "0"},
 		{"run", "registry.example/team/unknown"},
 		{"run", "-for", "2h", "1"},
+		{"run", "-for", "500ms", "1"},
+		{"run", "-for", "1500ms", "1"},
+		{"run", "-for", "0s", "1"},
+		{"run", "-for", "-1s", "1"},
 		{"run", "1", "2"},
 	} {
 		if _, err := gpuCtl(t, socket, "", args...); err == nil {

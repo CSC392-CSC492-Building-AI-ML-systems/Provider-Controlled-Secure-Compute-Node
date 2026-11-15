@@ -153,7 +153,8 @@ gpu-ctl reclaim              # stop the current job immediately
 
 `gpu-ctl run` starts the chosen image as a local lease with a `local-` lease
 ID, lasting 30 minutes by default and at most one hour, the container
-engine's lifetime cap. Lease events are printed by `node-agent` as JSON lines,
+engine's lifetime cap. `-for` accepts whole seconds from `1s` to `1h`.
+`-serve` and `-interactive` are separate modes and cannot be combined. Lease events are printed by `node-agent` as JSON lines,
 the same format as the single-offer command. Stopping `node-agent` cancels
 and removes a running job.
 

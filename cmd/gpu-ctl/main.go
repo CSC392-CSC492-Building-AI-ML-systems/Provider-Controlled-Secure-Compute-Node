@@ -125,8 +125,8 @@ func (client cli) run(ctx context.Context, args []string) error {
 	if flags.NArg() > 1 {
 		return errors.New("run takes at most one image")
 	}
-	if *duration <= 0 || *duration > control.MaxRunDuration {
-		return fmt.Errorf("-for must be between 1s and %s", control.MaxRunDuration)
+	if *duration < time.Second || *duration > control.MaxRunDuration || *duration%time.Second != 0 {
+		return fmt.Errorf("-for must be a whole number of seconds between 1s and %s", control.MaxRunDuration)
 	}
 
 	response, err := client.send(ctx, control.Request{Command: control.CommandImages}, commandTimeout)

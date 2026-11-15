@@ -3,11 +3,14 @@ package main
 import (
 	"bytes"
 	"context"
+	"flag"
 	"io"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -116,5 +119,67 @@ func TestServeRunsReclaimsAndCompletesJobs(t *testing.T) {
 		!strings.Contains(events.String(), `"outcome":"reclaimed"`) ||
 		!strings.Contains(events.String(), `"outcome":"completed"`) {
 		t.Fatalf("events:\n%s", events.String())
+	}
+}
+
+// Run the actual main entry point in a subprocess so flag wiring is covered.
+func TestServeCLIProcess(t *testing.T) {
+	if os.Getenv("NODE_AGENT_CLI_TEST") == "1" {
+		os.Args = append([]string{os.Args[0]}, strings.Split(os.Getenv("NODE_AGENT_CLI_ARGS"), "\n")...)
+		flag.CommandLine = flag.NewFlagSet("node-agent", flag.ExitOnError)
+		main()
+		os.Exit(0)
+	}
+	dir, err := os.MkdirTemp("", "agent-cli-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	policy, socket := filepath.Join(dir, "policy.json"), filepath.Join(dir, "control", "agent.sock")
+	if err := os.WriteFile(policy, []byte(`{"images":[]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	binary, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, binary, "-test.run=^TestServeCLIProcess$")
+	cmd.Env = append(os.Environ(), "NODE_AGENT_CLI_TEST=1", "NODE_AGENT_CLI_ARGS=-serve\n-allowlist\n"+policy+"\n-socket\n"+socket)
+	var logs bytes.Buffer
+	cmd.Stderr = &logs
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	var waitErr error
+	go func() { waitErr = cmd.Wait(); close(done) }()
+	defer func() { cancel(); <-done }()
+	for {
+		response, err := control.Send(ctx, socket, control.Request{Command: control.CommandStatus})
+		if err == nil {
+			if response.State != lease.StateIdle {
+				t.Fatalf("status=%+v", response)
+			}
+			break
+		}
+		select {
+		case <-done:
+			t.Fatalf("agent exited: %v: %s", waitErr, logs.String())
+		case <-ctx.Done():
+			t.Fatal("agent failed to start before timeout")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	<-done
+	if waitErr != nil {
+		t.Fatalf("shutdown: %v: %s", waitErr, logs.String())
+	}
+	if _, err := os.Stat(socket); !os.IsNotExist(err) {
+		t.Fatalf("socket not removed: %v", err)
 	}
 }
