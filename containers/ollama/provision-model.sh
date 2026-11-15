@@ -22,6 +22,8 @@ fi
 podman volume create "$volume" >/dev/null
 
 exec podman run --rm \
+    --cap-drop=ALL \
+    --security-opt=no-new-privileges \
     --volume "${volume}:/models:Z" \
     --entrypoint /usr/local/bin/provision-approved-model \
     "$image"

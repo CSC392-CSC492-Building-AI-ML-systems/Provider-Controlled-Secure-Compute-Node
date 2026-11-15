@@ -92,7 +92,11 @@ fi
 echo "Downloading approved model ${APPROVED_MODEL}."
 download_snapshot="$(mktemp)"
 find "$OLLAMA_MODELS" -type f | sort > "$download_snapshot"
-/bin/ollama pull "$APPROVED_MODEL"
+if ! /bin/ollama pull "$APPROVED_MODEL"; then
+    echo "Download failed. Removing the partial download so provisioning can be retried." >&2
+    remove_downloaded_files
+    exit 1
+fi
 
 set +e
 /usr/local/bin/verify-approved-model

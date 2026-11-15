@@ -7,6 +7,9 @@ LABEL org.opencontainers.image.version="0.2.0"
 
 ENV OLLAMA_HOST=0.0.0.0:11434
 ENV OLLAMA_MODELS=/models
+# Ollama writes a key file under $HOME/.ollama at startup. /tmp stays writable
+# when the node runs the container as an unprivileged user on a read-only root.
+ENV HOME=/tmp
 
 COPY --chmod=0444 approved-model.env /usr/local/share/provider-node/approved-model.env
 COPY --chmod=0555 verify-approved-model.sh /usr/local/bin/verify-approved-model
@@ -15,8 +18,10 @@ COPY --chmod=0555 entrypoint.sh /usr/local/bin/start-ollama
 
 EXPOSE 11434
 
+# Integrity is verified once at startup; re-hashing 638 MB every interval
+# would load the host and could exceed the timeout.
 HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=6 \
-    CMD /usr/local/bin/verify-approved-model && OLLAMA_HOST=127.0.0.1:11434 /bin/ollama list
+    CMD OLLAMA_HOST=127.0.0.1:11434 /bin/ollama list
 
 STOPSIGNAL SIGTERM
 
