@@ -1,12 +1,27 @@
 # Curated Ollama Inference Container
 
-This directory contains the Ollama service image for the provider node. The
-image starts the Ollama HTTP API in a rootless Podman container and serves one
-approved model from a Podman volume.
+This directory contains the curated inference image for the provider node.
+By default the image runs one inference job against one approved model and
+exits; it can also run the Ollama HTTP API for development. The model is read
+from a Podman volume.
 
 The base image is Ollama `0.40.6`, pinned to its immutable multi-architecture
 OCI digest. This prevents a later tag update from silently changing the
 software that runs on a provider node.
+
+## Status
+
+| Area | State |
+| --- | --- |
+| Job runner (`jobrunner/`) | Unit-tested with `go test` against a fake Ollama server |
+| Image build, provisioning, job and serve modes | Written, **not yet run**: no Linux host with Podman has been available |
+| GPU inference | Written, **not yet run**: needs the NVIDIA provider node with the Container Toolkit |
+| Publishing | Script written, **not yet run**: no registry chosen yet |
+| Node-agent integration | **Not started**: the container engine does not yet mount the model and job directories or allow enough memory (see [JOB_CONTRACT.md](JOB_CONTRACT.md#requirements-for-the-node-agent)) |
+
+The first step on a Linux host with rootless Podman is to run
+[`smoke-test.sh`](#smoke-test) and fix anything it reports. Podman on macOS
+(`podman machine`) can run the CPU checks too.
 
 ## Approved model
 

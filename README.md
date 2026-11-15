@@ -64,6 +64,8 @@ The MVP focuses on **curated inference workloads only**. The following are out o
 - Notebooks
 - Arbitrary code execution
 
+The curated inference image is in [`containers/ollama`](containers/ollama/README.md).
+
 ## Outcome
 
 A deployable prototype of a secure compute node that demonstrates provider-controlled participation in a GPU commons. The design should be suitable for future adoption by organizations such as UofT labs, nonprofits, and research groups contributing underused GPUs.
