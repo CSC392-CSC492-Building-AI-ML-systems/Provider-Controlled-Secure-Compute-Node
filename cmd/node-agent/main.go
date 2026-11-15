@@ -3,8 +3,10 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -27,7 +29,7 @@ func main() {
 	if *interactive {
 		cfg, err := promptConfig(bufio.NewReader(os.Stdin), Config{Allowlist: *allowlistPath, ShowOutput: *showOutput})
 		if err != nil {
-			if err.Error() == "quit" {
+			if errors.Is(err, errQuit) || errors.Is(err, io.EOF) {
 				return
 			}
 			log.Fatal(err)
@@ -58,15 +60,9 @@ func run(ctx context.Context, path string, input io.Reader, output io.Writer, wo
 	if err != nil {
 		return err
 	}
-	var offer lease.Offer
-	decoder := json.NewDecoder(io.LimitReader(input, 64*1024))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&offer); err != nil {
-		return fmt.Errorf("decode offer: %w", err)
-	}
-	var extra any
-	if err := decoder.Decode(&extra); err != io.EOF {
-		return fmt.Errorf("expected exactly one JSON offer")
+	offer, err := decodeOffer(input)
+	if err != nil {
+		return err
 	}
 	reporter := &localReporter{encoder: json.NewEncoder(output)}
 	engine := containerengine.New(checker)
@@ -76,6 +72,27 @@ func run(ctx context.Context, path string, input io.Reader, output io.Writer, wo
 		return err
 	}
 	return manager.Wait(ctx)
+}
+
+func decodeOffer(input io.Reader) (lease.Offer, error) {
+	var offer lease.Offer
+	contents, err := io.ReadAll(io.LimitReader(input, 64*1024+1))
+	if err != nil {
+		return offer, fmt.Errorf("read offer: %w", err)
+	}
+	if len(contents) > 64*1024 {
+		return offer, fmt.Errorf("offer exceeds 64 KiB limit")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(contents))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&offer); err != nil {
+		return offer, fmt.Errorf("decode offer: %w", err)
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		return offer, fmt.Errorf("expected exactly one JSON offer")
+	}
+	return offer, nil
 }
 
 type localReporter struct{ encoder *json.Encoder }

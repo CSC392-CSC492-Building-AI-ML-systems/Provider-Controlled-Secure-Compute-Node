@@ -3,13 +3,20 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
+	"io"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node/internal/allowlist"
 	"github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node/internal/capability"
 )
+
+var errQuit = errors.New("quit")
 
 // Config holds local execution settings and informational machine specs.
 type Config struct {
@@ -39,9 +46,13 @@ func promptConfig(in *bufio.Reader, cfg Config) (Config, error) {
 				fmt.Println("Set both the allowlist and offer JSON file before starting.")
 				continue
 			}
+			if err := validateInputs(cfg); err != nil {
+				fmt.Printf("Cannot start: %v\n", err)
+				continue
+			}
 			return cfg, nil
 		case "q", "quit", "exit":
-			return cfg, fmt.Errorf("quit")
+			return cfg, errQuit
 		case "1":
 			cfg.Allowlist, err = editString(in, "Allowlist JSON file", cfg.Allowlist)
 		case "2":
@@ -58,6 +69,38 @@ func promptConfig(in *bufio.Reader, cfg Config) (Config, error) {
 			return cfg, err
 		}
 	}
+}
+
+// Validate before leaving the menu so users can correct paths or JSON errors.
+func validateInputs(cfg Config) error {
+	for _, path := range []string{cfg.Allowlist, cfg.OfferPath} {
+		info, err := os.Stat(path)
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("%q must be a regular file", path)
+		}
+	}
+	if _, err := allowlist.Load(cfg.Allowlist); err != nil {
+		return err
+	}
+	file, err := os.Open(cfg.OfferPath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	offer, err := decodeOffer(file)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(offer.ID) == "" || strings.TrimSpace(offer.ImageDigest) == "" || offer.ExpiresAt.IsZero() {
+		return fmt.Errorf("offer requires ID, ImageDigest, and ExpiresAt")
+	}
+	if !offer.ExpiresAt.After(time.Now()) {
+		return fmt.Errorf("offer has expired; supply a future ExpiresAt")
+	}
+	return nil
 }
 
 func printSettings(cfg Config) {
@@ -218,8 +261,8 @@ func editInt(in *bufio.Reader, label string, cur int) (int, error) {
 		return cur, nil
 	}
 	n, err := strconv.Atoi(line)
-	if err != nil {
-		fmt.Printf("invalid int %q, keeping %d\n", line, cur)
+	if err != nil || n < 0 {
+		fmt.Printf("Enter a nonnegative whole number; keeping %d\n", cur)
 		return cur, nil
 	}
 	return n, nil
@@ -247,7 +290,7 @@ func editBool(in *bufio.Reader, label string, cur bool) (bool, error) {
 
 func readLine(in *bufio.Reader) (string, error) {
 	line, err := in.ReadString('\n')
-	if err != nil {
+	if err != nil && !(errors.Is(err, io.EOF) && len(line) > 0) {
 		return "", err
 	}
 	return strings.TrimSpace(line), nil
