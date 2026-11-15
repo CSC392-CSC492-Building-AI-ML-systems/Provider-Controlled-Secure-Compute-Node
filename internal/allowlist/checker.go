@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -77,4 +78,19 @@ func (checker *Checker) ImageReference(_ context.Context, imageDigest string) (s
 		return "", fmt.Errorf("%w: %s", ErrNotAllowed, imageDigest)
 	}
 	return image + "@" + imageDigest, nil
+}
+
+// Entries returns the approved images, sorted by repository and then digest.
+func (checker *Checker) Entries() []Entry {
+	entries := make([]Entry, 0, len(checker.images))
+	for digest, image := range checker.images {
+		entries = append(entries, Entry{Digest: digest, Image: image})
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].Image != entries[j].Image {
+			return entries[i].Image < entries[j].Image
+		}
+		return entries[i].Digest < entries[j].Digest
+	})
+	return entries
 }

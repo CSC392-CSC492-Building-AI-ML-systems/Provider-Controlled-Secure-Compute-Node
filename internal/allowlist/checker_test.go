@@ -74,3 +74,19 @@ func TestLoadReadsJSONFile(t *testing.T) {
 		t.Error("Load(missing file) returned nil error")
 	}
 }
+
+func TestEntriesListsImagesInStableOrder(t *testing.T) {
+	checker, err := NewChecker([]Entry{
+		{Digest: otherDigest, Image: "registry.example/team/zeta"},
+		{Digest: ollamaDigest, Image: "docker.io/ollama/ollama"},
+	})
+	if err != nil {
+		t.Fatalf("NewChecker() returned unexpected error: %v", err)
+	}
+	entries := checker.Entries()
+	if len(entries) != 2 ||
+		entries[0] != (Entry{Digest: ollamaDigest, Image: "docker.io/ollama/ollama"}) ||
+		entries[1] != (Entry{Digest: otherDigest, Image: "registry.example/team/zeta"}) {
+		t.Fatalf("Entries() = %v", entries)
+	}
+}

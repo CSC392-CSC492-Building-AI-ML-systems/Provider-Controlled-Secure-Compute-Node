@@ -1,7 +1,8 @@
 # Way forward
 
 The provider-side lease and Podman path is implemented and tested with fakes.
-Coordinator networking and external provider controls are not wired yet.
+Coordinator networking is not wired yet. Provider controls are available
+locally through `gpu-ctl` (see [provider controls](provider-controls.md#local-provider-cli)).
 
 ## Completed
 
@@ -21,8 +22,9 @@ Coordinator networking and external provider controls are not wired yet.
 3. Implement the coordinator client in
    [`internal/coordinator/client.go`](../internal/coordinator/client.go).
 4. Add registration, heartbeats, and coordinator connectivity handling.
-5. Expose `Drain()` and `Reclaim()` through a secure local control path so
-   `gpu-ctl` controls the running manager rather than a separate process.
+5. ~~Expose `Drain()` and `Reclaim()` through a secure local control path so
+   `gpu-ctl` controls the running manager rather than a separate process.~~
+   Done: `node-agent -serve` and `gpu-ctl` over a private Unix socket.
 6. Connect the dashboard to the real manager instead of its mock controller.
 7. Add end-to-end and failure tests for coordinator, heartbeat, and control
    behavior.
