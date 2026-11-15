@@ -297,6 +297,63 @@ the node agent's container restrictions:
 It removes its containers and job files and exits nonzero on the first failed
 check. Set `SKIP_BUILD=1` to test an image you have already built.
 
+## Publish and allowlist the image
+
+Provider nodes only run images listed by digest in their allowlist, and the
+node agent pulls them from a registry with TLS verification. A local
+`localhost/...` build cannot be used by the node agent.
+
+The suggested registry is the GitHub Container Registry (`ghcr.io`) under the
+project's GitHub organization. Log in with a personal access token that has
+the `write:packages` scope:
+
+```sh
+podman login ghcr.io
+```
+
+Then publish from a clean checkout:
+
+```sh
+containers/ollama/publish-image.sh \
+  ghcr.io/csc392-csc492-building-ai-ml-systems/provider-node-ollama
+```
+
+The script:
+
+1. refuses to run if `containers/ollama` has uncommitted changes, so every
+   published digest corresponds to a commit (recorded in the
+   `org.opencontainers.image.revision` label);
+2. builds for `linux/amd64` (set `PLATFORMS=linux/amd64,linux/arm64` for
+   both; building for another architecture than the host's needs
+   `qemu-user-static`);
+3. fixes file timestamps to the commit time, so rebuilding the same commit
+   produces the same layers;
+4. tags the image with the version from the Containerfile's
+   `org.opencontainers.image.version` label and refuses to replace an
+   existing version when `skopeo` is installed;
+5. pushes the image and prints its digest and the allowlist entry:
+
+   ```json
+   {"digest": "sha256:<64 hex characters>", "image": "ghcr.io/csc392-csc492-building-ai-ml-systems/provider-node-ollama"}
+   ```
+
+Add that entry to the `images` array of the provider's allowlist file. New
+GitHub packages are private: either make the package public or log in on each
+provider node with a read-only token.
+
+### Updating the image
+
+A digest is a hash of the image's content, so any change (a script, the
+approved model, the base image) gives a new digest. Nodes keep refusing the
+new image until a provider allowlists it. To release a change:
+
+1. Commit the change and bump `org.opencontainers.image.version` in the
+   Containerfile.
+2. Run the smoke test against the new build.
+3. Run `publish-image.sh` and add the printed entry to each provider's
+   allowlist.
+4. Remove the old digest from the allowlist once no leases use it.
+
 ## Develop the job runner
 
 The job runner is a small Go program with no dependencies outside the
