@@ -95,7 +95,7 @@ func (r *runner) run(ctx context.Context) int {
 	}
 	defer process.stop()
 
-	if err := r.client.waitReady(ctx, process.exited(), r.config.startTimeout); err != nil {
+	if err := r.client.waitReady(ctx, process, r.config.startTimeout); err != nil {
 		if ctx.Err() != nil {
 			return r.cancelled()
 		}

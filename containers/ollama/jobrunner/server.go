@@ -10,13 +10,19 @@ import (
 
 // server is a running Ollama process.
 type server interface {
-	exited() <-chan error
+	// exited is closed once the process has exited. Closing (rather than
+	// sending a value) lets any number of callers observe the exit.
+	exited() <-chan struct{}
+	// exitErr returns the process's exit error. It is valid only after
+	// exited is closed.
+	exitErr() error
 	stop()
 }
 
 type serverProcess struct {
 	cmd  *exec.Cmd
-	done chan error
+	done chan struct{}
+	err  error
 }
 
 // startServer runs `ollama serve` bound to host. Ollama's own logs go to
@@ -29,15 +35,26 @@ func startServer(binary, host string) (server, error) {
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-	process := &serverProcess{cmd: cmd, done: make(chan error, 1)}
-	go func() { process.done <- cmd.Wait() }()
+	process := &serverProcess{cmd: cmd, done: make(chan struct{})}
+	go func() {
+		process.err = cmd.Wait()
+		close(process.done)
+	}()
 	return process, nil
 }
 
-func (process *serverProcess) exited() <-chan error { return process.done }
+func (process *serverProcess) exited() <-chan struct{} { return process.done }
+
+func (process *serverProcess) exitErr() error { return process.err }
 
 // stop asks Ollama to shut down and kills it if it does not exit in time.
+// It returns immediately if the process has already exited.
 func (process *serverProcess) stop() {
+	select {
+	case <-process.done:
+		return
+	default:
+	}
 	_ = process.cmd.Process.Signal(syscall.SIGTERM)
 	select {
 	case <-process.done:

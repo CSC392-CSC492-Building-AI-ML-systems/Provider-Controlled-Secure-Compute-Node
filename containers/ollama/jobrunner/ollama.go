@@ -35,7 +35,7 @@ type generateResult struct {
 
 // waitReady polls Ollama until it answers, the server exits, or the timeout
 // passes.
-func (client *ollamaClient) waitReady(ctx context.Context, exited <-chan error, timeout time.Duration) error {
+func (client *ollamaClient) waitReady(ctx context.Context, process server, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	ticker := time.NewTicker(250 * time.Millisecond)
@@ -45,8 +45,8 @@ func (client *ollamaClient) waitReady(ctx context.Context, exited <-chan error, 
 			return nil
 		}
 		select {
-		case err := <-exited:
-			return fmt.Errorf("ollama exited before it was ready: %v", err)
+		case <-process.exited():
+			return fmt.Errorf("ollama exited before it was ready: %v", process.exitErr())
 		case <-ctx.Done():
 			return fmt.Errorf("ollama was not ready after %s", timeout)
 		case <-ticker.C:

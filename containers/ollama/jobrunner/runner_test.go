@@ -17,12 +17,14 @@ import (
 const testModel = "tinyllama:1.1b"
 
 type fakeServer struct {
-	done    chan error
+	done    chan struct{}
+	err     error
 	stopped bool
 }
 
-func (server *fakeServer) exited() <-chan error { return server.done }
-func (server *fakeServer) stop()                { server.stopped = true }
+func (server *fakeServer) exited() <-chan struct{} { return server.done }
+func (server *fakeServer) exitErr() error          { return server.err }
+func (server *fakeServer) stop()                   { server.stopped = true }
 
 // fakeOllama answers the endpoints the runner uses.
 type fakeOllama struct {
@@ -92,7 +94,7 @@ func newHarness(t *testing.T, request string) *harness {
 
 	h := &harness{
 		ollama: &fakeOllama{generateBody: `{"response":"A GPU is a processor.","done":true,"done_reason":"stop","total_duration":2500000000,"prompt_eval_count":12,"eval_count":6}`},
-		server: &fakeServer{done: make(chan error)},
+		server: &fakeServer{done: make(chan struct{})},
 		output: output,
 		stderr: &bytes.Buffer{},
 	}
@@ -232,8 +234,8 @@ func TestRunMapsModelVerificationFailures(t *testing.T) {
 func TestRunReportsServerThatExitsEarly(t *testing.T) {
 	h := newHarness(t, `{"prompt":"hi"}`)
 	h.runner.client = newOllamaClient("http://127.0.0.1:1")
-	h.server.done = make(chan error, 1)
-	h.server.done <- os.ErrProcessDone
+	h.server.err = os.ErrProcessDone
+	close(h.server.done)
 	if code := h.runner.run(context.Background()); code != exitServerStartFailed {
 		t.Fatalf("exit code = %d, want %d", code, exitServerStartFailed)
 	}
