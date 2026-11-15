@@ -1,0 +1,53 @@
+# Build the job runner with a pinned Go toolchain. It is a static binary, so
+# it runs in the Ollama image without extra libraries. The builder runs on the
+# build machine's platform and cross-compiles for the target architecture.
+FROM --platform=$BUILDPLATFORM docker.io/library/golang:1.23.4-bookworm@sha256:95db116434e3f21a2a15600ffc7169bf380c6bfd021b154d106fcb346721c277 AS jobrunner
+
+ARG TARGETOS
+ARG TARGETARCH
+
+WORKDIR /src
+COPY jobrunner/ ./
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
+    go build -trimpath -ldflags="-s -w -buildid=" -o /out/ollama-job .
+
+FROM docker.io/ollama/ollama:0.40.6@sha256:265409e1d931028a8f7d5a32bcbafddd7bffbc6cc629d77efe9560adf692a5e7
+
+LABEL org.opencontainers.image.title="Provider Node Curated Ollama"
+LABEL org.opencontainers.image.description="Curated Ollama inference jobs pinned to TinyLlama 1.1B"
+LABEL org.opencontainers.image.source="https://github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node"
+LABEL org.opencontainers.image.version="0.3.0"
+
+# Used only by `serve` mode. Job mode always binds to the container loopback.
+ENV OLLAMA_HOST=0.0.0.0:11434
+ENV OLLAMA_MODELS=/models
+# The model volume is mounted read-only, so Ollama must not try to delete
+# blobs it considers unused when it starts.
+ENV OLLAMA_NOPRUNE=1
+# Ollama writes a key file under $HOME/.ollama at startup. /tmp stays writable
+# when the node runs the container as an unprivileged user on a read-only root.
+ENV HOME=/tmp
+
+# Mount points for the job contract. They must exist in the image because the
+# node agent runs the container with a read-only root filesystem.
+RUN mkdir -p /job/input /job/output /models
+
+COPY --chmod=0444 approved-model.env /usr/local/share/provider-node/approved-model.env
+COPY --chmod=0555 verify-approved-model.sh /usr/local/bin/verify-approved-model
+COPY --chmod=0555 provision-approved-model.sh /usr/local/bin/provision-approved-model
+COPY --chmod=0555 entrypoint.sh /usr/local/bin/start-ollama
+COPY --chmod=0555 --from=jobrunner /out/ollama-job /usr/local/bin/ollama-job
+
+EXPOSE 11434
+
+# Integrity is verified once at startup; re-hashing 638 MB every interval
+# would load the host and could exceed the timeout.
+HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=6 \
+    CMD OLLAMA_HOST=127.0.0.1:11434 /bin/ollama list
+
+STOPSIGNAL SIGTERM
+
+ENTRYPOINT ["/usr/local/bin/start-ollama"]
+# The node agent starts the image without a command, so the default is one
+# inference job. Pass `serve` to run the HTTP API for local development.
+CMD ["job"]
