@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node/internal/allowlist"
+	"github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node/internal/lease"
 )
 
 var testDigest = "sha256:" + strings.Repeat("a", 64)
@@ -84,6 +85,130 @@ func TestLaunchIsolationAndWait(t *testing.T) {
 	name := strings.TrimPrefix(create[1], "--name=")
 	if !reflect.DeepEqual(calls[5], []string{"rm", "--force", "--ignore", "--time=0", "--", name}) {
 		t.Fatalf("cleanup = %v", calls[5])
+	}
+}
+
+func TestLaunchRequestUsesInferenceWorkspaceAndOllamaPolicy(t *testing.T) {
+	engine := testEngine(t)
+	var calls [][]string
+	engine.run = func(_ context.Context, args ...string) (string, error) {
+		calls = append(calls, args)
+		switch args[0] {
+		case "info":
+			return "true\n", nil
+		case "wait":
+			return "0\n", nil
+		default:
+			return "", nil
+		}
+	}
+
+	request := &lease.InferenceRequest{Prompt: "hello"}
+	workload, err := engine.LaunchRequest(context.Background(), testDigest, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owned, ok := workload.(*Workload)
+	if !ok || owned.workspace == nil {
+		t.Fatalf("workload workspace = %#v", owned)
+	}
+	workspaceRoot := owned.workspace.Root()
+	contents, err := os.ReadFile(owned.workspace.RequestPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(contents), `"prompt":"hello"`) {
+		t.Fatalf("request = %s", contents)
+	}
+	if err := os.WriteFile(owned.workspace.ResponsePath(), []byte(`{"status":"ok","model":"tinyllama:1.1b","response":"world","done_reason":"stop","processor":"cpu"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := workload.Wait(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	response, found := owned.Response()
+	if !found || response.Response != "world" {
+		t.Fatalf("response = %#v, found = %v", response, found)
+	}
+	if _, err := os.Stat(workspaceRoot); !os.IsNotExist(err) {
+		t.Fatalf("workspace was not removed: %v", err)
+	}
+
+	create := calls[2]
+	for _, flag := range []string{
+		"--memory=2g", "--memory-swap=2g",
+		"--volume=ollama-models:/models:ro",
+		"--volume=" + filepath.Join(workspaceRoot, "input") + ":/job/input:ro",
+		"--volume=" + filepath.Join(workspaceRoot, "output") + ":/job/output:rw",
+	} {
+		found := false
+		for _, arg := range create {
+			if arg == flag {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("missing curated workload flag %s", flag)
+		}
+	}
+}
+
+func TestLaunchRequestAddsNVIDIACDIWhenGPUIsRequired(t *testing.T) {
+	engine := testEngine(t)
+	engine.cdiReady = func(context.Context) (bool, error) { return true, nil }
+	var create []string
+	engine.run = func(_ context.Context, args ...string) (string, error) {
+		if args[0] == "create" {
+			create = append([]string(nil), args...)
+		}
+		if args[0] == "info" {
+			return "true", nil
+		}
+		if args[0] == "wait" {
+			return "0", nil
+		}
+		return "", nil
+	}
+
+	request := &lease.InferenceRequest{Prompt: "hello", RequireGPU: true}
+	workload, err := engine.LaunchRequest(context.Background(), testDigest, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owned := workload.(*Workload)
+	if err := os.WriteFile(owned.workspace.ResponsePath(), []byte(`{"status":"ok","model":"tinyllama:1.1b","response":"world","done_reason":"stop","processor":"gpu"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := workload.Wait(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"--device=nvidia.com/gpu=all", "--env=OLLAMA_JOB_REQUIRE_GPU=1"} {
+		found := false
+		for _, arg := range create {
+			if arg == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("missing GPU flag %s in %v", want, create)
+		}
+	}
+}
+
+func TestLaunchRequestRefusesGPUWithoutCDI(t *testing.T) {
+	engine := testEngine(t)
+	engine.cdiReady = func(context.Context) (bool, error) { return false, nil }
+	engine.run = func(context.Context, ...string) (string, error) {
+		t.Fatal("called Podman before CDI validation")
+		return "", nil
+	}
+	_, err := engine.LaunchRequest(context.Background(), testDigest, &lease.InferenceRequest{
+		Prompt:     "hello",
+		RequireGPU: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "NVIDIA CDI device is unavailable") {
+		t.Fatalf("error = %v", err)
 	}
 }
 

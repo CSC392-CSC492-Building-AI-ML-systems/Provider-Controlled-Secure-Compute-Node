@@ -13,9 +13,22 @@ type Workload interface {
 	Kill(ctx context.Context) error
 }
 
+// ResultWorkload optionally exposes a structured result collected before the
+// workload's temporary workspace is removed.
+type ResultWorkload interface {
+	Response() (InferenceResponse, bool)
+}
+
 // ContainerEngine launches container workloads.
 type ContainerEngine interface {
 	Launch(ctx context.Context, imageDigest string) (Workload, error)
+}
+
+// RequestContainerEngine launches a curated workload with its validated
+// inference request. Engines that implement this optional interface own the
+// request workspace and its cleanup.
+type RequestContainerEngine interface {
+	LaunchRequest(ctx context.Context, imageDigest string, request *InferenceRequest) (Workload, error)
 }
 
 // Coordinator reports node-side lease decisions and outcomes.

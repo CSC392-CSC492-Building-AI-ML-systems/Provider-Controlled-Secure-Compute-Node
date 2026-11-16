@@ -85,8 +85,11 @@ These are local events, not network acknowledgements from the remote coordinator
 Rejected offers never invoke Podman. A launch failure emits a failed result and
 returns a command error. A nonzero job exit produces a failed result with its exit
 code; the command itself succeeds if execution supervision and reporting succeed.
-Diagnostics go to stderr. Output files are not collected. Pass `-show-output` to print up to 16 KiB of
-container logs to stderr after exit. This opts into a container-local log capped
+Diagnostics go to stderr. Curated inference jobs collect and validate the
+container's `response.json` before emitting it in the local result event.
+Generic image-only jobs report their exit code without collecting output files.
+Pass `-show-output` to print up to 16 KiB of container logs to stderr after exit.
+This opts into a container-local log capped
 at 64 KiB, removed along with the container; default execution keeps logging off.
 
 ## Container policy and cleanup
@@ -114,8 +117,8 @@ collected, then force-removed. Failed creation/start and cancelled waits also
 attempt removal with an independent ten-second timeout. Cleanup failure keeps
 the manager reserved and preserves the workload handle for retry. Successful
 cleanup releases the node even if result reporting fails; durable report retries,
-crash recovery, image-cache pruning, drain/reclaim controls and output collection
-are not implemented here. After an unclean agent exit, stopped containers may
+crash recovery and image-cache pruning are not implemented here. After an
+unclean agent exit, stopped containers may
 require provider cleanup (`podman ps -a --filter name=compute-node-`).
 
 The allowlist remains essential: containers share the host kernel. This policy

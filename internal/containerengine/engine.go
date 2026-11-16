@@ -6,9 +6,11 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -16,6 +18,8 @@ import (
 	"time"
 
 	"github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node/internal/allowlist"
+	"github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node/internal/capability"
+	"github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node/internal/jobworkspace"
 	"github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node/internal/lease"
 )
 
@@ -25,20 +29,60 @@ type Engine struct {
 	Output    io.Writer
 	allowlist *allowlist.Checker
 	run       func(context.Context, ...string) (string, error)
+	cdiReady  func(context.Context) (bool, error)
 }
 
 func New(checker *allowlist.Checker) *Engine {
-	return &Engine{allowlist: checker, run: runPodman}
+	return &Engine{allowlist: checker, run: runPodman, cdiReady: detectCDIReady}
 }
 
 // Require an explicit registry and an untagged repository; disallow alternate
 // transports, short-name resolution and command-line options at this boundary.
 var referencePattern = regexp.MustCompile(`^(localhost|[a-z0-9]+([.-][a-z0-9]+)+)(:[0-9]+)?/[a-z0-9]+([._-][a-z0-9]+)*(/[a-z0-9]+([._-][a-z0-9]+)*)*@sha256:[a-f0-9]{64}$`)
 
+const modelVolume = "ollama-models"
+
 // Launch pulls the approved image, creates an isolated container, then starts it.
 // A deadline limits container lifetime via conmon even if the agent exits.
 // Without a deadline the maximum runtime is one hour.
 func (engine *Engine) Launch(ctx context.Context, digest string) (lease.Workload, error) {
+	return engine.launch(ctx, digest, nil, "512m", false)
+}
+
+// LaunchRequest runs a curated inference workload with its provider-owned
+// request workspace and the larger resource policy required by Ollama.
+func (engine *Engine) LaunchRequest(
+	ctx context.Context,
+	digest string,
+	request *lease.InferenceRequest,
+) (lease.Workload, error) {
+	if request == nil {
+		return nil, errors.New("inference request is required")
+	}
+	workspace, err := jobworkspace.New("")
+	if err != nil {
+		return nil, err
+	}
+	if err := workspace.WriteRequest(*request); err != nil {
+		_ = workspace.Remove()
+		return nil, err
+	}
+	return engine.launch(ctx, digest, workspace, "2g", request.RequireGPU)
+}
+
+func (engine *Engine) launch(
+	ctx context.Context,
+	digest string,
+	workspace *jobworkspace.Workspace,
+	memory string,
+	requireGPU bool,
+) (lease.Workload, error) {
+	retainWorkspace := false
+	defer func() {
+		if !retainWorkspace && workspace != nil {
+			_ = workspace.Remove()
+		}
+	}()
 	if engine.allowlist == nil {
 		return nil, errors.New("image allowlist is required")
 	}
@@ -51,6 +95,18 @@ func (engine *Engine) Launch(ctx context.Context, digest string) (lease.Workload
 	}
 	setupCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
+	if requireGPU {
+		if engine.cdiReady == nil {
+			return nil, errors.New("refusing to launch: CDI detection is not configured")
+		}
+		available, err := engine.cdiReady(setupCtx)
+		if err != nil {
+			return nil, fmt.Errorf("check NVIDIA CDI availability: %w", err)
+		}
+		if !available {
+			return nil, errors.New("refusing to launch: NVIDIA CDI device is unavailable")
+		}
+	}
 	rootless, err := engine.run(setupCtx, "info", "--format", "{{.Host.Security.Rootless}}")
 	if err != nil {
 		return nil, err
@@ -65,7 +121,11 @@ func (engine *Engine) Launch(ctx context.Context, digest string) (lease.Workload
 	if _, err := rand.Read(random[:]); err != nil {
 		return nil, fmt.Errorf("generate container name: %w", err)
 	}
-	workload := &Workload{engine: engine, name: "compute-node-" + hex.EncodeToString(random[:])}
+	workload := &Workload{
+		engine:    engine,
+		name:      "compute-node-" + hex.EncodeToString(random[:]),
+		workspace: workspace,
+	}
 	lifetime := time.Hour
 	if deadline, ok := ctx.Deadline(); ok {
 		lifetime = min(lifetime, time.Until(deadline))
@@ -81,9 +141,19 @@ func (engine *Engine) Launch(ctx context.Context, digest string) (lease.Workload
 		"--pid=private", "--ipc=private", "--uts=private",
 		"--read-only", "--read-only-tmpfs=false", "--image-volume=ignore",
 		"--tmpfs=/tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777",
-		"--pids-limit=128", "--cpus=1", "--memory=512m", "--memory-swap=512m",
+		"--pids-limit=128", "--cpus=1", "--memory=" + memory, "--memory-swap=" + memory,
 		"--ulimit=nofile=1024:1024", "--http-proxy=false",
 		"--health-cmd=none", "--timeout=" + strconv.Itoa(seconds)}
+	if workspace != nil {
+		args = append(args,
+			"--volume="+modelVolume+":/models:ro",
+			"--volume="+workspace.InputDir()+":/job/input:ro",
+			"--volume="+workspace.OutputDir()+":/job/output:rw",
+		)
+	}
+	if requireGPU {
+		args = append(args, "--device=nvidia.com/gpu=all", "--env=OLLAMA_JOB_REQUIRE_GPU=1")
+	}
 	if engine.Output == nil {
 		args = append(args, "--log-driver=none")
 	} else {
@@ -102,13 +172,16 @@ func (engine *Engine) Launch(ctx context.Context, digest string) (lease.Workload
 		}
 		return nil, err
 	}
+	retainWorkspace = true
 	return workload, nil
 }
 
 // Workload owns a named container. Exit metadata is retained until Wait or Kill.
 type Workload struct {
-	engine *Engine
-	name   string
+	engine    *Engine
+	name      string
+	workspace *jobworkspace.Workspace
+	response  *lease.InferenceResponse
 }
 
 // Wait returns the container's exit code (including nonzero job exits), then
@@ -122,19 +195,34 @@ func (workload *Workload) Wait(ctx context.Context) (int, error) {
 	if err != nil || code < 0 || code > 255 {
 		return 0, errors.Join(fmt.Errorf("invalid Podman exit code %q", output), workload.cleanup())
 	}
+	var logErr error
 	if workload.engine.Output != nil {
 		logs, logErr := workload.engine.run(ctx, "logs", "--", workload.name)
 		if logErr == nil {
 			_, logErr = io.WriteString(workload.engine.Output, logs)
 		}
-		return code, errors.Join(logErr, workload.cleanup())
 	}
-	return code, workload.cleanup()
+	var responseErr error
+	if workload.workspace != nil {
+		workload.response, responseErr = readInferenceResponse(workload.workspace.ResponsePath())
+	}
+	return code, errors.Join(logErr, responseErr, workload.cleanup())
+}
+
+// Response returns the structured inference result collected by Wait.
+func (workload *Workload) Response() (lease.InferenceResponse, bool) {
+	if workload.response == nil {
+		return lease.InferenceResponse{}, false
+	}
+	return *workload.response, true
 }
 
 // Kill force-removes only this workload; repeat calls are harmless.
 func (workload *Workload) Kill(ctx context.Context) error {
 	_, err := workload.engine.run(ctx, "rm", "--force", "--ignore", "--time=0", "--", workload.name)
+	if err == nil && workload.workspace != nil {
+		err = workload.workspace.Remove()
+	}
 	return err
 }
 
@@ -142,6 +230,37 @@ func (workload *Workload) cleanup() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return workload.Kill(ctx)
+}
+
+func readInferenceResponse(path string) (*lease.InferenceResponse, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open inference response: %w", err)
+	}
+	defer file.Close()
+	contents, err := io.ReadAll(io.LimitReader(file, lease.MaxResponseFileBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read inference response: %w", err)
+	}
+	if len(contents) > lease.MaxResponseFileBytes {
+		return nil, fmt.Errorf("inference response is larger than %d bytes", lease.MaxResponseFileBytes)
+	}
+	decoder := json.NewDecoder(bytes.NewReader(contents))
+	decoder.DisallowUnknownFields()
+	var response lease.InferenceResponse
+	if err := decoder.Decode(&response); err != nil {
+		return nil, fmt.Errorf("decode inference response: %w", err)
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err == nil {
+		return nil, errors.New("inference response contains multiple JSON values")
+	} else if !errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("inference response has trailing data: %w", err)
+	}
+	if err := response.Validate(); err != nil {
+		return nil, fmt.Errorf("validate inference response: %w", err)
+	}
+	return &response, nil
 }
 
 // Keep diagnostics bounded even if Podman emits a large pull response.
@@ -168,4 +287,12 @@ func runPodman(ctx context.Context, args ...string) (string, error) {
 		return "", fmt.Errorf("podman %s: %w: %s", args[0], errors.Join(ctx.Err(), err), strings.TrimSpace(stderr.String()))
 	}
 	return stdout.String(), nil
+}
+
+func detectCDIReady(ctx context.Context) (bool, error) {
+	runtimes, err := capability.DetectRuntimes(ctx)
+	if err != nil {
+		return false, err
+	}
+	return runtimes.CDI.Available, nil
 }

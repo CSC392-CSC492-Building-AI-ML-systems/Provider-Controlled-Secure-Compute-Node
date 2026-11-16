@@ -118,7 +118,19 @@ func decodeOffer(input io.Reader) (lease.Offer, error) {
 	return offer, nil
 }
 
-type localReporter struct{ encoder *json.Encoder }
+type localReporter struct {
+	encoder *json.Encoder
+	mu      sync.Mutex
+}
+
+func (reporter *localReporter) encode(event any) error {
+	if reporter.encoder == nil {
+		return errors.New("local reporter encoder is not configured")
+	}
+	reporter.mu.Lock()
+	defer reporter.mu.Unlock()
+	return reporter.encoder.Encode(event)
+}
 
 func (reporter *localReporter) ReportAccepted(_ context.Context, id string) error {
 	return reporter.encode(map[string]any{"type": "accepted", "lease_id": id})
@@ -127,5 +139,11 @@ func (reporter *localReporter) ReportRejected(_ context.Context, id string, reas
 	return reporter.encode(map[string]any{"type": "rejected", "lease_id": id, "reason": reason})
 }
 func (reporter *localReporter) ReportResult(_ context.Context, result lease.Result) error {
-	return reporter.encode(map[string]any{"type": "result", "lease_id": result.LeaseID, "outcome": result.Outcome, "exit_code": result.ExitCode})
+	return reporter.encode(map[string]any{
+		"type":      "result",
+		"lease_id":  result.LeaseID,
+		"outcome":   result.Outcome,
+		"exit_code": result.ExitCode,
+		"inference": result.Inference,
+	})
 }
