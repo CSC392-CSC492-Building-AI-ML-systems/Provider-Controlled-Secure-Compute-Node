@@ -9,9 +9,10 @@ import (
 )
 
 const (
-	MaxRequestBytes = 16 << 10
-	MaxPromptBytes  = 8 << 10
-	MaxNumPredict   = 1024
+	MaxRequestBytes      = 16 << 10
+	MaxPromptBytes       = 8 << 10
+	MaxNumPredict        = 1024
+	MaxResponseFileBytes = 128 << 10
 )
 
 // State describes the lease manager's current lifecycle state.
@@ -117,7 +118,58 @@ func (request InferenceRequest) Validate() error {
 
 // Result is the terminal status sent to the coordinator.
 type Result struct {
-	LeaseID  string
-	Outcome  Outcome
-	ExitCode *int
+	LeaseID   string
+	Outcome   Outcome
+	ExitCode  *int
+	Inference *InferenceResponse
+}
+
+// InferenceResponse is the structured result produced by the curated Ollama
+// job runner.
+type InferenceResponse struct {
+	Status     string           `json:"status"`
+	Model      string           `json:"model"`
+	Response   string           `json:"response,omitempty"`
+	DoneReason string           `json:"done_reason,omitempty"`
+	Truncated  bool             `json:"truncated,omitempty"`
+	Processor  string           `json:"processor,omitempty"`
+	Metrics    InferenceMetrics `json:"metrics,omitempty"`
+	Error      *InferenceError  `json:"error,omitempty"`
+}
+
+type InferenceMetrics struct {
+	PromptTokens     int   `json:"prompt_tokens,omitempty"`
+	CompletionTokens int   `json:"completion_tokens,omitempty"`
+	TotalDurationMS  int64 `json:"total_duration_ms,omitempty"`
+}
+
+type InferenceError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+// Validate checks the response shape without including generated text in
+// validation errors.
+func (response InferenceResponse) Validate() error {
+	switch response.Status {
+	case "ok":
+		if strings.TrimSpace(response.Response) == "" {
+			return fmt.Errorf("successful inference response is empty")
+		}
+		if response.Error != nil {
+			return fmt.Errorf("successful inference response contains an error")
+		}
+		if response.Processor != "cpu" && response.Processor != "gpu" &&
+			response.Processor != "partial" && response.Processor != "unknown" {
+			return fmt.Errorf("inference response has invalid processor")
+		}
+	case "error":
+		if response.Error == nil || strings.TrimSpace(response.Error.Code) == "" ||
+			strings.TrimSpace(response.Error.Message) == "" {
+			return fmt.Errorf("error inference response is incomplete")
+		}
+	default:
+		return fmt.Errorf("inference response has invalid status")
+	}
+	return nil
 }

@@ -230,6 +230,11 @@ func (manager *Manager) Wait(ctx context.Context) error {
 	}
 
 	result := Result{LeaseID: active.ID, Outcome: OutcomeCompleted, ExitCode: &code}
+	if resultWorkload, ok := workload.(ResultWorkload); ok {
+		if response, found := resultWorkload.Response(); found {
+			result.Inference = &response
+		}
+	}
 	if waitErr != nil {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		killErr := workload.Kill(cleanupCtx)

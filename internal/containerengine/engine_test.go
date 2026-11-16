@@ -120,9 +120,16 @@ func TestLaunchRequestUsesInferenceWorkspaceAndOllamaPolicy(t *testing.T) {
 	if !strings.Contains(string(contents), `"prompt":"hello"`) {
 		t.Fatalf("request = %s", contents)
 	}
+	if err := os.WriteFile(owned.workspace.ResponsePath(), []byte(`{"status":"ok","model":"tinyllama:1.1b","response":"world","done_reason":"stop","processor":"cpu"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	if _, err := workload.Wait(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+	response, found := owned.Response()
+	if !found || response.Response != "world" {
+		t.Fatalf("response = %#v, found = %v", response, found)
 	}
 	if _, err := os.Stat(workspaceRoot); !os.IsNotExist(err) {
 		t.Fatalf("workspace was not removed: %v", err)
@@ -167,6 +174,10 @@ func TestLaunchRequestAddsNVIDIACDIWhenGPUIsRequired(t *testing.T) {
 	request := &lease.InferenceRequest{Prompt: "hello", RequireGPU: true}
 	workload, err := engine.LaunchRequest(context.Background(), testDigest, request)
 	if err != nil {
+		t.Fatal(err)
+	}
+	owned := workload.(*Workload)
+	if err := os.WriteFile(owned.workspace.ResponsePath(), []byte(`{"status":"ok","model":"tinyllama:1.1b","response":"world","done_reason":"stop","processor":"gpu"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := workload.Wait(context.Background()); err != nil {

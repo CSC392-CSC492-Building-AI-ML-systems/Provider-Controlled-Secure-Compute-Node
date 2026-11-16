@@ -139,5 +139,11 @@ func (reporter *localReporter) ReportRejected(_ context.Context, id string, reas
 	return reporter.encode(map[string]any{"type": "rejected", "lease_id": id, "reason": reason})
 }
 func (reporter *localReporter) ReportResult(_ context.Context, result lease.Result) error {
-	return reporter.encode(map[string]any{"type": "result", "lease_id": result.LeaseID, "outcome": result.Outcome, "exit_code": result.ExitCode})
+	return reporter.encode(map[string]any{
+		"type":      "result",
+		"lease_id":  result.LeaseID,
+		"outcome":   result.Outcome,
+		"exit_code": result.ExitCode,
+		"inference": result.Inference,
+	})
 }

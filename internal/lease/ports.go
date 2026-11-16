@@ -13,6 +13,12 @@ type Workload interface {
 	Kill(ctx context.Context) error
 }
 
+// ResultWorkload optionally exposes a structured result collected before the
+// workload's temporary workspace is removed.
+type ResultWorkload interface {
+	Response() (InferenceResponse, bool)
+}
+
 // ContainerEngine launches container workloads.
 type ContainerEngine interface {
 	Launch(ctx context.Context, imageDigest string) (Workload, error)

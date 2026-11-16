@@ -6,9 +6,11 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -179,6 +181,7 @@ type Workload struct {
 	engine    *Engine
 	name      string
 	workspace *jobworkspace.Workspace
+	response  *lease.InferenceResponse
 }
 
 // Wait returns the container's exit code (including nonzero job exits), then
@@ -192,14 +195,26 @@ func (workload *Workload) Wait(ctx context.Context) (int, error) {
 	if err != nil || code < 0 || code > 255 {
 		return 0, errors.Join(fmt.Errorf("invalid Podman exit code %q", output), workload.cleanup())
 	}
+	var logErr error
 	if workload.engine.Output != nil {
 		logs, logErr := workload.engine.run(ctx, "logs", "--", workload.name)
 		if logErr == nil {
 			_, logErr = io.WriteString(workload.engine.Output, logs)
 		}
-		return code, errors.Join(logErr, workload.cleanup())
 	}
-	return code, workload.cleanup()
+	var responseErr error
+	if workload.workspace != nil {
+		workload.response, responseErr = readInferenceResponse(workload.workspace.ResponsePath())
+	}
+	return code, errors.Join(logErr, responseErr, workload.cleanup())
+}
+
+// Response returns the structured inference result collected by Wait.
+func (workload *Workload) Response() (lease.InferenceResponse, bool) {
+	if workload.response == nil {
+		return lease.InferenceResponse{}, false
+	}
+	return *workload.response, true
 }
 
 // Kill force-removes only this workload; repeat calls are harmless.
@@ -215,6 +230,37 @@ func (workload *Workload) cleanup() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return workload.Kill(ctx)
+}
+
+func readInferenceResponse(path string) (*lease.InferenceResponse, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open inference response: %w", err)
+	}
+	defer file.Close()
+	contents, err := io.ReadAll(io.LimitReader(file, lease.MaxResponseFileBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read inference response: %w", err)
+	}
+	if len(contents) > lease.MaxResponseFileBytes {
+		return nil, fmt.Errorf("inference response is larger than %d bytes", lease.MaxResponseFileBytes)
+	}
+	decoder := json.NewDecoder(bytes.NewReader(contents))
+	decoder.DisallowUnknownFields()
+	var response lease.InferenceResponse
+	if err := decoder.Decode(&response); err != nil {
+		return nil, fmt.Errorf("decode inference response: %w", err)
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err == nil {
+		return nil, errors.New("inference response contains multiple JSON values")
+	} else if !errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("inference response has trailing data: %w", err)
+	}
+	if err := response.Validate(); err != nil {
+		return nil, fmt.Errorf("validate inference response: %w", err)
+	}
+	return &response, nil
 }
 
 // Keep diagnostics bounded even if Podman emits a large pull response.
