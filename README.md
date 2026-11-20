@@ -75,8 +75,17 @@ A deployable prototype of a secure compute node that demonstrates provider-contr
 - [ ] **Working compute node software** with registration, heartbeat, lease, execution, and drain lifecycle
 - [ ] **Single-machine demonstration:** node registers, receives a lease, runs allowlisted inference containers, reports completion, and drains cleanly
 - [x] **Security checklist** covering protections such as rootless containers, image pinning, host isolation, and resource limits — [docs/security-checklist.md](docs/security-checklist.md)
-- [ ] **Provider configuration guide** explaining setup, controls, and reclaim procedures
-- [ ] **Failure-case documentation** covering container crashes, lost heartbeat, and emergency reclaim
+- [x] **Provider configuration guide** explaining setup, controls, and reclaim procedures — [docs/provider-guide.md](docs/provider-guide.md)
+- [x] **Failure-case documentation** covering container crashes, lost heartbeat, and emergency reclaim — [docs/failure-cases.md](docs/failure-cases.md)
+
+## Quickstart
+
+1. Follow the [provider configuration guide](docs/provider-guide.md).
+2. Copy [examples/allowlist.json](examples/allowlist.json) and replace the
+   placeholder digest with an approved image.
+3. Run a single offer or `node-agent -serve` with `gpu-ctl` as described in the guide.
+4. Before lending hardware, complete the [security checklist](docs/security-checklist.md)
+   and review [failure cases](docs/failure-cases.md).
 
 ## Run an accepted workload
 

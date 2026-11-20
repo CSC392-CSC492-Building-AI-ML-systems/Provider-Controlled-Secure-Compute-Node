@@ -1,0 +1,8 @@
+{
+  "images": [
+    {
+      "digest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "image": "registry.example/team/ollama-inference"
+    }
+  ]
+}
