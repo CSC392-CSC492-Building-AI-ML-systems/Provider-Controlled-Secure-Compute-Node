@@ -74,7 +74,7 @@ A deployable prototype of a secure compute node that demonstrates provider-contr
 
 - [ ] **Working compute node software** with registration, heartbeat, lease, execution, and drain lifecycle
 - [ ] **Single-machine demonstration:** node registers, receives a lease, runs allowlisted inference containers, reports completion, and drains cleanly
-- [ ] **Security checklist** covering protections such as rootless containers, image pinning, host isolation, and resource limits
+- [x] **Security checklist** covering protections such as rootless containers, image pinning, host isolation, and resource limits — [docs/security-checklist.md](docs/security-checklist.md)
 - [ ] **Provider configuration guide** explaining setup, controls, and reclaim procedures
 - [ ] **Failure-case documentation** covering container crashes, lost heartbeat, and emergency reclaim
 
