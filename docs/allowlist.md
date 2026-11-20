@@ -18,4 +18,5 @@ We use digests to sore the approved jobs in the allowlist files. Each digest is 
 
 Podman specifically uses digests to retrieve the image and compare. If they match, then it is able to run the container, otherwise refuses the image.
 
-`checker.go` and `checker_test.go` implements this, and our allow list is stored on disk via a JSON file. Note that the JSON file does not exist yet. 
+`checker.go` and `checker_test.go` implements this, and our allow list is stored on disk via a JSON file. A starter file is [examples/allowlist.json](../examples/allowlist.json); replace the placeholder digest before use.
+
