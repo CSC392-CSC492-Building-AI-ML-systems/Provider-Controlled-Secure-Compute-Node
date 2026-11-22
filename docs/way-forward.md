@@ -1,7 +1,8 @@
 # Way forward
 
 The provider-side lease and Podman path is implemented and tested with fakes.
-Coordinator networking is not wired yet. Provider controls are available
+Registration and heartbeats reach the coordinator; lease offers and reports do
+not yet. Provider controls are available
 locally through `gpu-ctl` (see [provider controls](provider-controls.md#local-provider-cli)).
 
 ## Completed
@@ -14,20 +15,26 @@ locally through `gpu-ctl` (see [provider controls](provider-controls.md#local-pr
 - Local single-offer execution through `cmd/node-agent`.
 - Secure local control path for `Drain()` and `Reclaim()` through
   `node-agent -serve` and `gpu-ctl` over a private Unix socket.
+- P16 coordinator client and a `lease.Coordinator` adapter for it, with tests.
+- Registration and heartbeats with `node-agent -serve -coordinator`; new work
+  stops while the coordinator is lost and resumes when it returns.
 
 ## Next tasks
 
-1. Define the coordinator protocol for registration, heartbeats, lease offers,
-   results, and connectivity failures.
-2. Implement configuration loading in
-   [`internal/config/config.go`](../internal/config/config.go).
-3. Implement the coordinator client in
-   [`internal/coordinator/client.go`](../internal/coordinator/client.go).
-4. Add registration, heartbeats, and coordinator connectivity handling.
+1. Poll coordinator lease offers (`GET /providers/{id}/lease-offers`), turn
+   them into `lease.Offer`s once P16 says what `job_requirements` holds, and
+   report through `coordinator.LeaseReporter` instead of the local JSON
+   reporter.
+2. Stop the running container when the coordinator is lost (H10 in
+   [coordinator requirements](coordinator-requirements.md)); today only new
+   work stops.
+3. Implement configuration loading in
+   [`internal/config/config.go`](../internal/config/config.go); the
+   coordinator connection is configured with `node-agent` flags for now.
+4. Feed capability discovery into registration instead of `-gpu-model`,
+   `-vram-mb` and `-driver` flags.
 5. Connect the dashboard to the real manager instead of its mock controller.
-6. Add end-to-end and failure tests for coordinator, heartbeat, and control
-   behavior.
-7. Add CI for `go test`, `go test -race`, and `go vet`.
+6. Add CI for `go test`, `go test -race`, and `go vet`.
 
 ## Linux validation
 

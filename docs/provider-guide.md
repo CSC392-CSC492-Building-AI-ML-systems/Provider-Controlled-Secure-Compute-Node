@@ -97,10 +97,22 @@ Before lending a real GPU:
 
 ## 7. Federation (when coordinator is available)
 
-Registration, heartbeat interval, API key, and accepted tiers are loaded from
-configuration (see `internal/config`). Protocol expectations are in
-[way-forward](way-forward.md) (coordinator client still pending). Until that path is
-connected in your environment, keep using local offers and `gpu-ctl`.
+Connect the long-running agent to a coordinator with flags:
+
+```bash
+node-agent -serve -allowlist examples/allowlist.json \
+  -coordinator http://127.0.0.1:8000 -provider-id "$(hostname)" \
+  -gpu-model "NVIDIA GeForce RTX 4080" -vram-mb 16376 -driver 580.178.04 \
+  -runtimes ollama -tiers standard
+```
+
+The API key comes from `-api-key` or `NODE_API_KEY`. `-heartbeat` (default
+5s) and `-lost-after` (default 15s) tune the heartbeat. While the coordinator
+is unreachable the agent refuses new work; see
+[failure cases](failure-cases.md#lost-heartbeat--coordinator-unreachable).
+Offer polling is not wired yet, so jobs still start through `gpu-ctl` or local
+offers. Protocol details are in
+[coordinator requirements](coordinator-requirements.md).
 
 ## Related docs
 

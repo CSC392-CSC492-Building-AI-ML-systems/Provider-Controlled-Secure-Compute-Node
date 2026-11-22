@@ -18,8 +18,9 @@ repository does not currently implement a network coordinator connection.
 | Run | Starts an approved image chosen by the provider as a local lease | `gpu-ctl run`, for local testing and demos; the coordinator chooses jobs in the real flow |
 
 The current local command and its limitations are documented in the
-[Podman execution guide](podman-execution.md). The coordinator client,
-registration, and heartbeat transport are placeholders.
+[Podman execution guide](podman-execution.md). With `-coordinator`, the agent
+also registers and heartbeats, and refuses new work, including `gpu-ctl run`,
+while the coordinator is unreachable.
 
 ## Allowlist control
 
