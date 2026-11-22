@@ -37,3 +37,28 @@ func TestP16RegisterSendsOnlyDocumentedFields(t *testing.T) {
 		t.Fatalf("body = %v", body)
 	}
 }
+
+func TestP16HeartbeatStatus(t *testing.T) {
+	for _, tc := range []struct {
+		body string
+		want ProviderStatus
+	}{
+		{`{"status":"ACTIVE"}`, "ACTIVE"},
+		{`{"status":"STALE"}`, "STALE"},
+		{`{"status":"DRAINING"}`, "DRAINING"},
+		{`{"status":"DRAINED"}`, ProviderDrained},
+		{`{"status":"UNKNOWN"}`, ""},
+		{`{}`, ""},
+	} {
+		t.Run(tc.body, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Write([]byte(tc.body))
+			}))
+			defer srv.Close()
+			status, err := NewP16(srv.URL, "n1", "").Heartbeat(context.Background())
+			if status != tc.want || (err != nil) != (tc.want == "") {
+				t.Fatalf("heartbeat status = %q, error = %v, want %q", status, err, tc.want)
+			}
+		})
+	}
+}

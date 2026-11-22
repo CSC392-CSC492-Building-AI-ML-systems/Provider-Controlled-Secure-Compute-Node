@@ -11,9 +11,11 @@ import (
 	"log"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node/internal/allowlist"
+	"github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node/internal/coordinator"
 	"github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node/internal/lease"
 )
 
@@ -38,12 +40,13 @@ type Manager interface {
 
 // Server answers gpu-ctl commands for one lease manager.
 type Server struct {
-	manager  Manager
-	recorder *Recorder
-	images   []allowlist.Entry
-	now      func() time.Time
-	logger   *log.Logger
-	jobs     sync.WaitGroup
+	manager           Manager
+	recorder          *Recorder
+	images            []allowlist.Entry
+	now               func() time.Time
+	logger            *log.Logger
+	jobs              sync.WaitGroup
+	coordinatorStatus atomic.Value // stores coordinator.ProviderStatus
 }
 
 // NewServer creates a control server. recorder must be the lease.Coordinator
@@ -53,6 +56,11 @@ func NewServer(manager Manager, recorder *Recorder, images []allowlist.Entry, lo
 		logger = log.New(io.Discard, "", 0)
 	}
 	return &Server{manager: manager, recorder: recorder, images: images, now: time.Now, logger: logger}
+}
+
+// SetCoordinatorStatus records the latest status reported by the coordinator.
+func (server *Server) SetCoordinatorStatus(status coordinator.ProviderStatus) {
+	server.coordinatorStatus.Store(status)
 }
 
 // Serve answers commands until ctx is cancelled, then waits for open
@@ -138,6 +146,9 @@ func (server *Server) dispatch(ctx context.Context, request Request) Response {
 
 	response.OK = true
 	response.State = server.manager.State()
+	if status, ok := server.coordinatorStatus.Load().(coordinator.ProviderStatus); ok {
+		response.CoordinatorStatus = status
+	}
 	if active, ok := server.manager.ActiveLease(); ok {
 		response.Lease = &Lease{ID: active.ID, ImageDigest: active.ImageDigest, ExpiresAt: active.ExpiresAt}
 	}

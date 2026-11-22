@@ -1,8 +1,8 @@
 # Failure cases
 
 How the node should behave when something goes wrong. Local lease and Podman
-paths are implemented today; coordinator registration and heartbeat transport
-are still being wired (see [way-forward](way-forward.md) and
+paths are implemented today, including coordinator registration and heartbeat
+handling (see [way-forward](way-forward.md) and
 [coordinator requirements](coordinator-requirements.md)).
 
 ## Container crash or nonzero exit
@@ -41,19 +41,21 @@ state without a result event.
 default 15s), or the coordinator returns `404` (forgotten provider) /
 `409` after drain.
 
-**Expected behavior (target, once heartbeat is enabled):**
+**Expected behavior:**
 
-1. Heartbeat loop retries at the normal interval and logs each failure.
-2. After `LostAfter` without a successful beat, assume leases are revoked:
-   stop the running container and clean up (`OnLost`).
-3. On `404 NOT_FOUND`, re-register; do not keep running work for a lease the
-   coordinator no longer tracks.
-4. On `409` removed/drained, stop heartbeating and polling until the provider
-   deliberately re-registers.
+1. The heartbeat loop logs failures and retries at the configured interval.
+2. After `lost_after`, the node refuses new leases and cancels the current
+   launch or wait so the workload can be removed. If cleanup fails, the lease
+   stays reserved for manual reclaim.
+3. On `404 NOT_FOUND`, the node immediately revokes its current lease and
+   attempts to re-register. Successful re-registration or a successful
+   heartbeat after a network outage restores lease admission once the prior
+   workload has been cleared.
+4. On `409`, the node shows `DRAINED` in `gpu-ctl status`, reclaims any active
+   lease, and stops heartbeating and taking leases. The local control socket
+   stays open. Restart the node agent to attempt registration again.
 
-Until the network client is connected, treat “no heartbeat” as an operational
-gap: local jobs still run, but the federation cannot detect staleness. Use
-provider reclaim as the emergency stop.
+The coordinator field in `gpu-ctl status` shows the last reported status.
 
 ## Emergency reclaim
 

@@ -24,11 +24,13 @@ import (
 
 // fakeP16 is a coordinator that answers registration and heartbeats.
 type fakeP16 struct {
-	mu           sync.Mutex
-	down         bool // registration fails with 503 while set
-	registerCode int  // non-zero: reject registration with this status
-	registered   map[string]any
-	heartbeats   int
+	mu            sync.Mutex
+	down          bool // registration fails with 503 while set
+	registerCode  int  // non-zero: reject registration with this status
+	registered    map[string]any
+	heartbeats    int
+	heartbeatCode int
+	status        string
 }
 
 func (f *fakeP16) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -50,7 +52,15 @@ func (f *fakeP16) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"provider_id":"n1","status":"ACTIVE"}`))
 	case r.Method == "POST" && r.URL.Path == "/providers/n1/heartbeat":
 		f.heartbeats++
-		w.Write([]byte(`{"provider_id":"n1","status":"ACTIVE"}`))
+		if f.heartbeatCode != 0 {
+			w.WriteHeader(f.heartbeatCode)
+			return
+		}
+		status := f.status
+		if status == "" {
+			status = "ACTIVE"
+		}
+		json.NewEncoder(w).Encode(map[string]string{"provider_id": "n1", "status": status})
 	default:
 		http.NotFound(w, r)
 	}
@@ -210,4 +220,102 @@ func TestServeStopsWhenRegistrationRejected(t *testing.T) {
 	if ctx.Err() != nil {
 		t.Fatal("serve kept running after registration was rejected")
 	}
+}
+
+func TestServeHandlesHeartbeatResults(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "podman"), []byte(fakeServePodman), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+":/bin:/usr/bin")
+	t.Setenv("PODMAN_TEST_DIR", dir)
+
+	coord := &fakeP16{}
+	srv := httptest.NewServer(coord)
+	defer srv.Close()
+	cfg, socket := federatedConfig(t, srv.URL, gpuReport)
+	cfg.LostAfter = config.Duration(100 * time.Millisecond)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	served := make(chan error, 1)
+	go func() { served <- serve(ctx, cfg, socket, io.Discard, nil, log.New(io.Discard, "", 0)) }()
+	defer func() {
+		cancel()
+		if err := <-served; err != nil {
+			t.Errorf("serve returned %v", err)
+		}
+	}()
+
+	send := func(command string) (control.Response, error) {
+		return control.Send(ctx, socket, control.Request{Command: command, Digest: testDigest})
+	}
+	wantStatus := func(status string) {
+		t.Helper()
+		eventually(t, "coordinator status "+status, func() bool {
+			reply, err := send(control.CommandStatus)
+			return err == nil && string(reply.CoordinatorStatus) == status
+		})
+	}
+	start := func() string {
+		t.Helper()
+		reply, err := send(control.CommandRun)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return reply.LeaseID
+	}
+	wantReclaimed := func(id string) {
+		t.Helper()
+		eventually(t, "lease "+id+" to be reclaimed", func() bool {
+			reply, err := send(control.CommandStatus)
+			return err == nil && reply.Lease == nil && reply.LastResult != nil &&
+				reply.LastResult.LeaseID == id && reply.LastResult.Outcome == lease.OutcomeReclaimed
+		})
+	}
+	wantDisconnected := func() {
+		t.Helper()
+		if _, err := send(control.CommandRun); err == nil || !strings.Contains(err.Error(), string(lease.RejectionDisconnected)) {
+			t.Fatalf("run = %v, want disconnected rejection", err)
+		}
+	}
+
+	wantStatus("ACTIVE")
+	first := start()
+	coord.with(func(f *fakeP16) { f.status = "DRAINING" })
+	wantStatus("DRAINING")
+	coord.with(func(f *fakeP16) { f.heartbeatCode = http.StatusServiceUnavailable })
+	wantReclaimed(first)
+	wantDisconnected()
+
+	coord.with(func(f *fakeP16) {
+		f.heartbeatCode = 0
+		f.status = "ACTIVE"
+	})
+	eventually(t, "lease admission to recover", func() bool {
+		reply, err := send(control.CommandRun)
+		if err == nil {
+			first = reply.LeaseID
+			return true
+		}
+		if !strings.Contains(err.Error(), string(lease.RejectionDisconnected)) {
+			t.Fatal(err)
+		}
+		return false
+	})
+	wantStatus("ACTIVE")
+	coord.with(func(f *fakeP16) { f.heartbeatCode = http.StatusConflict })
+	wantStatus("DRAINED")
+	wantReclaimed(first)
+	if _, err := send(control.CommandResume); err != nil {
+		t.Fatal(err)
+	}
+	wantDisconnected()
+	var stoppedAt int
+	coord.with(func(f *fakeP16) { stoppedAt = f.heartbeats })
+	time.Sleep(3 * time.Duration(cfg.HeartbeatInterval))
+	coord.with(func(f *fakeP16) {
+		if f.heartbeats != stoppedAt {
+			t.Errorf("heartbeats continued after removal: %d -> %d", stoppedAt, f.heartbeats)
+		}
+	})
 }

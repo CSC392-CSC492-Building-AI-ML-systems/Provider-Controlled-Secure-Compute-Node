@@ -67,15 +67,20 @@ func newHeartbeat(ctx context.Context, cfg config.Config, client coordinator.Cli
 
 	// Refuse leases until registration succeeds (R1).
 	manager.SetCoordinatorConnected(false)
+	registered := false
 	return &agent.Heartbeat{
 		Client:       client,
 		Registration: registration,
 		Interval:     time.Duration(cfg.HeartbeatInterval),
 		LostAfter:    time.Duration(cfg.LostAfter),
-		OnRegistered: func() { manager.SetCoordinatorConnected(true) },
-		// Lost/recovered handling (H10), status tracking (H4) and removal (H6)
-		// are not wired yet; see docs/way-forward.md.
-		OnLost: func() { logger.Printf("heartbeat lost: leases presumed revoked") },
-		Log:    slog.New(slog.NewTextHandler(logger.Writer(), nil)).With("provider_id", cfg.ProviderID),
+		OnRegistered: func() {
+			if !registered {
+				registered = true
+				manager.SetCoordinatorConnected(true)
+			}
+		},
+		OnLost:      func() { manager.SetCoordinatorConnected(false) },
+		OnRecovered: func() { manager.SetCoordinatorConnected(true) },
+		Log:         slog.New(slog.NewTextHandler(logger.Writer(), nil)).With("provider_id", cfg.ProviderID),
 	}, nil
 }

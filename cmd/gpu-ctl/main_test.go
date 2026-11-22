@@ -221,3 +221,11 @@ func TestUsageErrors(t *testing.T) {
 		t.Errorf("status with no agent error = %v", err)
 	}
 }
+
+func TestPrintStatusShowsCoordinatorView(t *testing.T) {
+	var output bytes.Buffer
+	printStatus(&output, control.Response{State: lease.StateIdle, CoordinatorStatus: "DRAINING"})
+	if !strings.Contains(output.String(), "Coordinator: DRAINING\n") {
+		t.Fatalf("status output = %q", output.String())
+	}
+}

@@ -107,6 +107,7 @@ func serve(ctx context.Context, cfg config.Config, socketPath string, output io.
 		if heartbeat, err = newHeartbeat(ctx, cfg, client, manager, discover, logger); err != nil {
 			return err
 		}
+		heartbeat.OnStatus = server.SetCoordinatorStatus
 	}
 
 	listener, err := control.Listen(socketPath)
@@ -120,9 +121,9 @@ func serve(ctx context.Context, cfg config.Config, socketPath string, output io.
 		logger.Printf("heartbeating to %s every %s", cfg.CoordinatorURL, time.Duration(cfg.HeartbeatInterval))
 		go func() {
 			defer close(heartbeatDone)
-			// A rejected registration stops the node. Removal by the
-			// coordinator (ErrRemoved, H6) currently stops it too.
-			if err := heartbeat.Run(ctx); err != nil && ctx.Err() == nil {
+			// Rejected startup registration is fatal. Removal stops only
+			// federation activity so local controls remain available (H6).
+			if err := heartbeat.Run(ctx); err != nil && !errors.Is(err, coordinator.ErrRemoved) && ctx.Err() == nil {
 				cancel(fmt.Errorf("coordinator: %w", err))
 			}
 		}()
@@ -131,6 +132,9 @@ func serve(ctx context.Context, cfg config.Config, socketPath string, output io.
 	}
 	logger.Printf("node agent listening on %s with %d approved image(s); control it with gpu-ctl", socketPath, len(checker.Entries()))
 	err = server.Serve(ctx, listener)
+	if err != nil {
+		cancel(err)
+	}
 	<-heartbeatDone
 	if cause := context.Cause(ctx); err == nil && cause != nil && !errors.Is(cause, context.Canceled) {
 		return cause
