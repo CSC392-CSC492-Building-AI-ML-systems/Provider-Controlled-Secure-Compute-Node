@@ -165,4 +165,42 @@ func TestHeartbeat(t *testing.T) {
 			t.Fatalf("recovered=%d", recovered)
 		}
 	})
+
+	t.Run("OnRegistered fires once registration succeeds", func(t *testing.T) {
+		f := &fakeCoordinator{registerErrs: []error{netErr}}
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		defer cancel()
+		registered, heartbeatsAtRegister := 0, -1
+		h := &Heartbeat{
+			Client:   f,
+			Interval: 5 * time.Millisecond,
+			OnRegistered: func() {
+				registered++
+				f.mu.Lock()
+				heartbeatsAtRegister = f.heartbeats
+				f.mu.Unlock()
+			},
+			Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		}
+		if err := h.Run(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if registered != 1 || heartbeatsAtRegister != 0 || f.registers != 2 {
+			t.Fatalf("registered=%d heartbeatsAtRegister=%d registers=%d", registered, heartbeatsAtRegister, f.registers)
+		}
+	})
+
+	t.Run("OnRegistered does not fire when registration is rejected", func(t *testing.T) {
+		f := &fakeCoordinator{registerErrs: []error{badRequest}}
+		registered := 0
+		h := &Heartbeat{
+			Client:       f,
+			Interval:     5 * time.Millisecond,
+			OnRegistered: func() { registered++ },
+			Log:          slog.New(slog.NewTextHandler(io.Discard, nil)),
+		}
+		if err := h.Run(context.Background()); !errors.Is(err, badRequest) || registered != 0 {
+			t.Fatalf("err=%v registered=%d", err, registered)
+		}
+	})
 }
