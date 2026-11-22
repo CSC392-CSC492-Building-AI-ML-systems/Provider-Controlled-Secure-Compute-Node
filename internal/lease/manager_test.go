@@ -987,3 +987,87 @@ func TestResumeEndsDrain(t *testing.T) {
 		t.Fatalf("State() after resuming with active work = %q, want %q", manager.State(), StateRunning)
 	}
 }
+
+func TestDisconnectedCoordinatorRejectsNewOffersUntilReconnected(t *testing.T) {
+	fixedNow := time.Date(2026, time.November, 21, 12, 0, 0, 0, time.UTC)
+	coordinator := &stubCoordinator{}
+	engine := &stubContainerEngine{}
+	manager := NewManager(&stubAllowlist{allowed: true}, engine, coordinator)
+	manager.now = func() time.Time { return fixedNow }
+	offer := func(id string) Offer {
+		return Offer{ID: id, ImageDigest: "sha256:approved", ExpiresAt: fixedNow.Add(time.Minute)}
+	}
+
+	if !manager.CoordinatorConnected() {
+		t.Fatal("new manager should start connected")
+	}
+	manager.SetCoordinatorConnected(false)
+	if manager.CoordinatorConnected() {
+		t.Fatal("CoordinatorConnected() = true after disconnect")
+	}
+
+	err := manager.ReceiveOffer(context.Background(), offer("lease-1"))
+	var rejection *OfferRejectedError
+	if !errors.As(err, &rejection) || rejection.Reason != RejectionDisconnected {
+		t.Fatalf("ReceiveOffer() error = %v, want disconnected rejection", err)
+	}
+	if len(engine.launchedDigests) != 0 {
+		t.Fatalf("Launch() calls = %d, want 0", len(engine.launchedDigests))
+	}
+	if manager.State() != StateIdle {
+		t.Fatalf("State() = %q, want %q", manager.State(), StateIdle)
+	}
+
+	manager.SetCoordinatorConnected(true)
+	if err := manager.ReceiveOffer(context.Background(), offer("lease-2")); err != nil {
+		t.Fatalf("ReceiveOffer() after reconnect returned %v", err)
+	}
+	if len(coordinator.accepted) != 1 || coordinator.accepted[0] != "lease-2" {
+		t.Fatalf("accepted = %v, want [lease-2]", coordinator.accepted)
+	}
+}
+
+func TestDisconnectKeepsRunningWork(t *testing.T) {
+	fixedNow := time.Date(2026, time.November, 21, 12, 0, 0, 0, time.UTC)
+	coordinator := &stubCoordinator{}
+	workload := newBlockingWorkload()
+	engine := &stubContainerEngine{workload: workload}
+	manager := NewManager(&stubAllowlist{allowed: true}, engine, coordinator)
+	manager.now = func() time.Time { return fixedNow }
+
+	if err := manager.ReceiveOffer(context.Background(), Offer{
+		ID: "lease-1", ImageDigest: "sha256:approved", ExpiresAt: fixedNow.Add(time.Minute),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	manager.SetCoordinatorConnected(false)
+
+	if manager.State() != StateRunning {
+		t.Fatalf("State() = %q, want %q", manager.State(), StateRunning)
+	}
+	if active, ok := manager.ActiveLease(); !ok || active.ID != "lease-1" {
+		t.Fatalf("ActiveLease() = %v, %v; want lease-1", active, ok)
+	}
+	if len(coordinator.results) != 0 {
+		t.Fatalf("results = %v, want none while the job is still running", coordinator.results)
+	}
+}
+
+func TestDrainingTakesPriorityOverDisconnected(t *testing.T) {
+	fixedNow := time.Date(2026, time.November, 21, 12, 0, 0, 0, time.UTC)
+	coordinator := &stubCoordinator{}
+	manager := NewManager(&stubAllowlist{allowed: true}, &stubContainerEngine{}, coordinator)
+	manager.now = func() time.Time { return fixedNow }
+	manager.SetCoordinatorConnected(false)
+	if err := manager.Drain(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	err := manager.ReceiveOffer(context.Background(), Offer{
+		ID: "lease-1", ImageDigest: "sha256:approved", ExpiresAt: fixedNow.Add(time.Minute),
+	})
+	var rejection *OfferRejectedError
+	if !errors.As(err, &rejection) || rejection.Reason != RejectionDraining {
+		t.Fatalf("ReceiveOffer() error = %v, want draining rejection", err)
+	}
+}
