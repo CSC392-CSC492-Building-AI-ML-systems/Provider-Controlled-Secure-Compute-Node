@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 // request is one call the fake P16 server received.
@@ -22,7 +24,7 @@ func fakeP16(t *testing.T, status int, body string) (*P16, *[]request) {
 	t.Helper()
 	var got []request
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		req := request{Method: r.Method, Path: r.URL.Path, APIKey: r.Header.Get("X-API-Key")}
+		req := request{Method: r.Method, Path: r.URL.EscapedPath(), APIKey: r.Header.Get("X-API-Key")}
 		raw, _ := io.ReadAll(r.Body)
 		if len(raw) > 0 {
 			if err := json.Unmarshal(raw, &req.Body); err != nil {
@@ -126,5 +128,81 @@ func TestP16UnmappedErrorKeepsRawBody(t *testing.T) {
 	}
 	if apiErr.Status != 500 || apiErr.Code != "UNKNOWN" || apiErr.Message != "upstream exploded" {
 		t.Fatalf("APIError = %+v", apiErr)
+	}
+}
+
+func TestP16AcceptReturnsExpiry(t *testing.T) {
+	client, got := fakeP16(t, http.StatusOK, `{"lease_status":"ACTIVE","expires_at":"2026-11-21T12:00:00Z"}`)
+	expires, err := client.Accept(context.Background(), "lease/1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := time.Date(2026, 11, 21, 12, 0, 0, 0, time.UTC); !expires.Equal(want) {
+		t.Fatalf("expires = %v, want %v", expires, want)
+	}
+	req := onlyRequest(t, got)
+	if req.Path != "/leases/lease%2F1/accept" || req.Body["provider_id"] != "node-1" {
+		t.Fatalf("request = %s %v", req.Path, req.Body)
+	}
+}
+
+func TestP16AcceptWithoutExpiryReturnsZero(t *testing.T) {
+	client, _ := fakeP16(t, http.StatusOK, `{"lease_status":"ACTIVE"}`)
+	expires, err := client.Accept(context.Background(), "lease-1")
+	if err != nil || !expires.IsZero() {
+		t.Fatalf("expires, err = %v, %v; want zero, nil", expires, err)
+	}
+}
+
+func TestP16RejectSendsReason(t *testing.T) {
+	client, got := fakeP16(t, http.StatusOK, `{}`)
+	if err := client.Reject(context.Background(), "lease-1", RejectLocalBusy); err != nil {
+		t.Fatal(err)
+	}
+	req := onlyRequest(t, got)
+	if req.Path != "/leases/lease-1/reject" || req.Body["reason"] != "LOCAL_BUSY" || req.Body["provider_id"] != "node-1" {
+		t.Fatalf("request = %s %v", req.Path, req.Body)
+	}
+}
+
+func TestP16ReportBody(t *testing.T) {
+	tests := []struct {
+		name   string
+		result Result
+		want   map[string]any
+	}{
+		{"success", Result{Success: true}, map[string]any{"provider_id": "node-1", "outcome": "SUCCESS"}},
+		{"failure", Result{Reason: FailExecution}, map[string]any{"provider_id": "node-1", "outcome": "FAILURE", "reason": "EXECUTION_ERROR"}},
+		{"failure without reason", Result{}, map[string]any{"provider_id": "node-1", "outcome": "FAILURE"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client, got := fakeP16(t, http.StatusOK, `{}`)
+			if err := client.Report(context.Background(), "lease-1", tt.result); err != nil {
+				t.Fatal(err)
+			}
+			req := onlyRequest(t, got)
+			if req.Path != "/leases/lease-1/report" || !maps.Equal(req.Body, tt.want) {
+				t.Fatalf("request = %s %v, want body %v", req.Path, req.Body, tt.want)
+			}
+		})
+	}
+}
+
+func TestP16LeaseCallsTreatNotFoundAndConflictAsGone(t *testing.T) {
+	for _, status := range []int{http.StatusNotFound, http.StatusConflict} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			client, _ := fakeP16(t, status, `{"error":{"code":"X","message":"y"}}`)
+			ctx := context.Background()
+			if _, err := client.Accept(ctx, "lease-1"); !errors.Is(err, ErrLeaseGone) {
+				t.Errorf("Accept err = %v, want ErrLeaseGone", err)
+			}
+			if err := client.Reject(ctx, "lease-1", RejectPolicy); !errors.Is(err, ErrLeaseGone) {
+				t.Errorf("Reject err = %v, want ErrLeaseGone", err)
+			}
+			if err := client.Report(ctx, "lease-1", Result{Success: true}); !errors.Is(err, ErrLeaseGone) {
+				t.Errorf("Report err = %v, want ErrLeaseGone", err)
+			}
+		})
 	}
 }
