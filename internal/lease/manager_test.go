@@ -1027,29 +1027,42 @@ func TestDisconnectedCoordinatorRejectsNewOffersUntilReconnected(t *testing.T) {
 	}
 }
 
-func TestDisconnectKeepsRunningWork(t *testing.T) {
-	fixedNow := time.Date(2026, time.November, 21, 12, 0, 0, 0, time.UTC)
+func TestDisconnectReclaimsRunningWork(t *testing.T) {
 	coordinator := &stubCoordinator{}
 	workload := newBlockingWorkload()
-	engine := &stubContainerEngine{workload: workload}
-	manager := NewManager(&stubAllowlist{allowed: true}, engine, coordinator)
-	manager.now = func() time.Time { return fixedNow }
+	manager := NewManager(&stubAllowlist{allowed: true}, &stubContainerEngine{workload: workload}, coordinator)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
 
-	if err := manager.ReceiveOffer(context.Background(), Offer{
-		ID: "lease-1", ImageDigest: "sha256:approved", ExpiresAt: fixedNow.Add(time.Minute),
+	if err := manager.ReceiveOffer(ctx, Offer{
+		ID: "lease-1", ImageDigest: "sha256:approved", ExpiresAt: time.Now().Add(time.Minute),
 	}); err != nil {
 		t.Fatal(err)
 	}
+	done := make(chan error, 1)
+	go func() { done <- manager.Wait(ctx) }()
+	select {
+	case <-workload.waiting:
+	case <-ctx.Done():
+		t.Fatal("workload did not start waiting")
+	}
 	manager.SetCoordinatorConnected(false)
-
-	if manager.State() != StateRunning {
-		t.Fatalf("State() = %q, want %q", manager.State(), StateRunning)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-ctx.Done():
+		t.Fatal("workload did not stop after disconnect")
 	}
-	if active, ok := manager.ActiveLease(); !ok || active.ID != "lease-1" {
-		t.Fatalf("ActiveLease() = %v, %v; want lease-1", active, ok)
+	select {
+	case <-workload.stopped:
+	default:
+		t.Fatal("workload not removed")
 	}
-	if len(coordinator.results) != 0 {
-		t.Fatalf("results = %v, want none while the job is still running", coordinator.results)
+	if manager.State() != StateIdle || len(coordinator.results) != 1 ||
+		coordinator.results[0].Outcome != OutcomeReclaimed {
+		t.Fatalf("state = %q, results = %+v", manager.State(), coordinator.results)
 	}
 }
 
@@ -1069,5 +1082,50 @@ func TestDrainingTakesPriorityOverDisconnected(t *testing.T) {
 	var rejection *OfferRejectedError
 	if !errors.As(err, &rejection) || rejection.Reason != RejectionDraining {
 		t.Fatalf("ReceiveOffer() error = %v, want draining rejection", err)
+	}
+}
+
+type interruptedLaunch struct {
+	started  chan struct{}
+	workload Workload
+}
+
+func (engine interruptedLaunch) Launch(ctx context.Context, _ string) (Workload, error) {
+	close(engine.started)
+	<-ctx.Done()
+	return engine.workload, ctx.Err()
+}
+
+func TestCoordinatorLossRevokesLaunchAcrossRecovery(t *testing.T) {
+	workload := &controlledWorkload{}
+	engine := interruptedLaunch{started: make(chan struct{}), workload: workload}
+	coordinator := &stubCoordinator{}
+	manager := NewManager(&stubAllowlist{allowed: true}, engine, coordinator)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	result := make(chan error, 1)
+	go func() {
+		result <- manager.ReceiveOffer(ctx, Offer{
+			ID: "lease-1", ImageDigest: "sha256:approved", ExpiresAt: time.Now().Add(time.Minute),
+		})
+	}()
+	select {
+	case <-engine.started:
+	case <-ctx.Done():
+		t.Fatal("launch did not start")
+	}
+	manager.SetCoordinatorConnected(false)
+	manager.SetCoordinatorConnected(true)
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("launch error = %v, want cancellation", err)
+		}
+	case <-ctx.Done():
+		t.Fatal("coordinator loss did not cancel launch")
+	}
+	if !workload.killed || manager.State() != StateIdle || len(coordinator.results) != 1 ||
+		coordinator.results[0].Outcome != OutcomeReclaimed {
+		t.Fatalf("killed = %t, state = %s, results = %+v", workload.killed, manager.State(), coordinator.results)
 	}
 }

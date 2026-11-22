@@ -213,6 +213,9 @@ func printImages(out io.Writer, images []allowlist.Entry) {
 
 func printStatus(out io.Writer, response control.Response) {
 	fmt.Fprintf(out, "State:       %s\n", response.State)
+	if response.CoordinatorStatus != "" {
+		fmt.Fprintf(out, "Coordinator: %s\n", response.CoordinatorStatus)
+	}
 	if active := response.Lease; active != nil {
 		fmt.Fprintf(out, "Job:         %s\n", active.ID)
 		fmt.Fprintf(out, "  Image:     %s\n", active.ImageDigest)

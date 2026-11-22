@@ -13,7 +13,7 @@ import (
 
 type Client interface {
 	Register(ctx context.Context, r Registration) error
-	Heartbeat(ctx context.Context) error
+	Heartbeat(ctx context.Context) (ProviderStatus, error)
 	Offers(ctx context.Context) ([]Offer, error)
 	// Accept returns the lease expiry; zero means the lease does not expire.
 	Accept(ctx context.Context, leaseID string) (time.Time, error)
@@ -44,6 +44,11 @@ type APIError struct {
 func (e *APIError) Error() string {
 	return fmt.Sprintf("coordinator: %d %s: %s", e.Status, e.Code, e.Message)
 }
+
+// ProviderStatus is the coordinator's view of the provider.
+type ProviderStatus string
+
+const ProviderDrained ProviderStatus = "DRAINED"
 
 type Capabilities struct {
 	GPUModel      string

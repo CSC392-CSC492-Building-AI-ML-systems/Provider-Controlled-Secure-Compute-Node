@@ -63,8 +63,10 @@ func TestServeStopsNewWorkWhileCoordinatorIsLost(t *testing.T) {
 		}
 		if r.URL.Path == "/providers" {
 			w.WriteHeader(http.StatusCreated)
+			io.WriteString(w, `{}`)
+			return
 		}
-		io.WriteString(w, `{}`)
+		io.WriteString(w, `{"status":"ACTIVE"}`)
 	}))
 	defer fake.Close()
 
@@ -87,7 +89,7 @@ func TestServeStopsNewWorkWhileCoordinatorIsLost(t *testing.T) {
 	defer cancel()
 	served := make(chan error, 1)
 	go func() {
-		served <- serveWithHeartbeat(ctx, policy, socket, &events, nil, log.New(&logs, "", 0), heartbeat)
+		served <- serveWithHeartbeat(ctx, policy, socket, &events, nil, log.New(&logs, "", 0), heartbeat, false)
 	}()
 
 	send := func(request control.Request) control.Response {

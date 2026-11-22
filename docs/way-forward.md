@@ -1,8 +1,8 @@
 # Way forward
 
 The provider-side lease and Podman path is implemented and tested with fakes.
-Registration and heartbeats reach the coordinator; lease offers and reports do
-not yet. Provider controls are available
+Registration and heartbeat handling are wired. Lease offer polling and
+coordinator result reporting are next. Provider controls are available
 locally through `gpu-ctl` (see [provider controls](provider-controls.md#local-provider-cli)).
 
 ## Completed
@@ -13,27 +13,26 @@ locally through `gpu-ctl` (see [provider controls](provider-controls.md#local-pr
 - Lease expiry, failure, cancellation, and cleanup handling.
 - `Drain()` and `Reclaim()` in the lease manager with tests.
 - Local single-offer execution through `cmd/node-agent`.
+- Configuration loading (`internal/config`, `node-agent -config`).
+- Coordinator registration built from capability discovery, gated so the node
+  takes no offers before it registers, and a heartbeat goroutine in
+  `node-agent -serve` (`internal/agent`, `internal/coordinator`).
 - Secure local control path for `Drain()` and `Reclaim()` through
   `node-agent -serve` and `gpu-ctl` over a private Unix socket.
-- P16 coordinator client and a `lease.Coordinator` adapter for it, with tests.
-- Registration and heartbeats with `node-agent -serve -coordinator`; new work
-  stops while the coordinator is lost and resumes when it returns.
+- P16 coordinator client and `coordinator.LeaseReporter` adapter, with tests.
+- Heartbeat loss reclaims active work and recovery reopens lease admission.
+- `gpu-ctl status` shows the latest coordinator status. Removal stops
+  heartbeats and lease admission while the local control socket stays open.
 
 ## Next tasks
 
-1. Poll coordinator lease offers (`GET /providers/{id}/lease-offers`), turn
-   them into `lease.Offer`s once P16 says what `job_requirements` holds, and
-   report through `coordinator.LeaseReporter` instead of the local JSON
-   reporter.
-2. Stop the running container when the coordinator is lost (H10 in
-   [coordinator requirements](coordinator-requirements.md)); today only new
-   work stops.
-3. Implement configuration loading in
-   [`internal/config/config.go`](../internal/config/config.go); the
-   coordinator connection is configured with `node-agent` flags for now.
-4. Feed capability discovery into registration instead of `-gpu-model`,
-   `-vram-mb` and `-driver` flags.
-5. Connect the dashboard to the real manager instead of its mock controller.
+1. Agree the `runtimes` and `tier` vocabularies with Project 7b (R5, R8).
+2. Poll lease offers (L1) once registered and feed them to the lease manager
+   once the coordinator's `job_requirements` format is agreed.
+3. Use `coordinator.LeaseReporter` for remote leases (L3–L7).
+4. Connect the dashboard to the real manager instead of its mock controller.
+5. Add end-to-end and failure tests for coordinator, heartbeat, and control
+   behavior.
 6. Add CI for `go test`, `go test -race`, and `go vet`.
 
 ## Linux validation

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -47,10 +48,21 @@ func (p *P16) Register(ctx context.Context, r Registration) error {
 	return mapStatus(p.do(ctx, "POST", "/providers", body, nil), map[int]error{409: ErrAlreadyRegistered})
 }
 
-func (p *P16) Heartbeat(ctx context.Context) error {
+func (p *P16) Heartbeat(ctx context.Context) (ProviderStatus, error) {
 	body := map[string]any{"provider_time": time.Now().UTC().Format(time.RFC3339Nano)}
-	return mapStatus(p.do(ctx, "POST", p.providerPath("/heartbeat"), body, nil),
-		map[int]error{404: ErrUnknownProvider, 409: ErrRemoved})
+	var reply struct {
+		Status ProviderStatus `json:"status"`
+	}
+	err := p.do(ctx, "POST", p.providerPath("/heartbeat"), body, &reply)
+	if err != nil {
+		return "", mapStatus(err, map[int]error{404: ErrUnknownProvider, 409: ErrRemoved})
+	}
+	switch reply.Status {
+	case "ACTIVE", "STALE", "DRAINING", ProviderDrained:
+		return reply.Status, nil
+	default:
+		return "", fmt.Errorf("invalid coordinator heartbeat status %q", reply.Status)
+	}
 }
 
 func (p *P16) Offers(ctx context.Context) ([]Offer, error) {

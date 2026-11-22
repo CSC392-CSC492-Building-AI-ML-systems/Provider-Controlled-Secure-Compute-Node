@@ -95,24 +95,63 @@ Before lending a real GPU:
    reclaim, drain).
 3. On Linux, run `./scripts/smoke-podman.sh`.
 
-## 7. Federation (when coordinator is available)
+## 7. Federation (registration and heartbeat)
 
-Connect the long-running agent to a coordinator with flags:
+Copy [examples/node-config.json](../examples/node-config.json) and pass it to
+serve mode:
 
-```bash
+```sh
+export NODE_API_KEY=...          # optional; overrides api_key in the file
+/tmp/node-agent -serve -config /path/to/node-config.json
+```
+
+`-allowlist` on the command line overrides `allowlist` in the file. Unknown
+fields are rejected, so a typo fails loudly instead of falling back to a default.
+
+| Field | Default | Notes |
+| --- | --- | --- |
+| `coordinator_url` | none (local-only) | Setting it turns on registration and heartbeats |
+| `provider_id` | lowercase hostname | Must stay the same across restarts (R2) |
+| `accepted_tiers` | none, required | Job tiers you will run (R5) |
+| `runtimes` | `[]` | Advertised alongside the detected `podman`, e.g. `"ollama"` (R8) |
+| `cpu_only` | `false` | Let a machine with no GPU register (see below) |
+| `heartbeat_interval` | `5s` | H2 |
+| `lost_after` | `15s` | Must be longer than `heartbeat_interval` (H10) |
+| `api_key` | none | Sent as `X-API-Key`; prefer `NODE_API_KEY` |
+
+On startup the agent runs capability discovery (`nvidia-smi`, Podman) and
+registers `gpu_model`, `vram_mb`, `driver_version`, and `runtimes` (R4). It
+refuses leases until registration succeeds, then heartbeats on its own
+goroutine. Heartbeat loss reclaims the current job and blocks new leases
+until recovery. See [Failure cases](failure-cases.md#lost-heartbeat--coordinator-unreachable).
+
+The agent refuses to start when it cannot register honestly:
+
+- **No GPU** and `cpu_only` unset. The coordinator rejects `vram_mb = 0` (R3).
+  With `cpu_only: true` the node registers `gpu_model: "cpu"`,
+  `vram_mb: <system RAM>` and `driver_version: "none"`. Use this for a CPU
+  demo, and only for jobs that fit in RAM.
+- **No rootless Podman.** Every job runs in it.
+- **A `4xx` registration reply** from the coordinator, e.g. a tier or runtime
+  it does not accept.
+
+For explicit capability overrides, start the agent with coordinator flags:
+
+```sh
 node-agent -serve -allowlist examples/allowlist.json \
   -coordinator http://127.0.0.1:8000 -provider-id "$(hostname)" \
   -gpu-model "NVIDIA GeForce RTX 4080" -vram-mb 16376 -driver 580.178.04 \
   -runtimes ollama -tiers standard
 ```
 
-The API key comes from `-api-key` or `NODE_API_KEY`. `-heartbeat` (default
-5s) and `-lost-after` (default 15s) tune the heartbeat. While the coordinator
-is unreachable the agent refuses new work; see
-[failure cases](failure-cases.md#lost-heartbeat--coordinator-unreachable).
-Offer polling is not wired yet, so jobs still start through `gpu-ctl` or local
-offers. Protocol details are in
-[coordinator requirements](coordinator-requirements.md).
+This mode uses `-api-key` or `NODE_API_KEY`. Use `-heartbeat` and
+`-lost-after` to set the interval and timeout. If startup registration is
+rejected, the socket stays open for local controls and the agent refuses
+leases. Use one startup mode per invocation.
+
+Start jobs through `gpu-ctl` or local offers. The
+[coordinator requirements](coordinator-requirements.md) describe the lease
+offer protocol for future polling.
 
 ## Related docs
 

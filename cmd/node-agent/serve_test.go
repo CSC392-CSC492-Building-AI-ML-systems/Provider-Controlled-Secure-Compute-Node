@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node/internal/config"
 	"github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node/internal/control"
 	"github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node/internal/lease"
 )
@@ -56,7 +57,7 @@ func TestServeRunsReclaimsAndCompletesJobs(t *testing.T) {
 	var events bytes.Buffer
 	served := make(chan error, 1)
 	go func() {
-		served <- serve(ctx, policy, socket, &events, nil, log.New(io.Discard, "", 0))
+		served <- serve(ctx, config.Config{AllowlistPath: policy}, socket, &events, nil, log.New(io.Discard, "", 0))
 	}()
 
 	send := func(request control.Request) control.Response {

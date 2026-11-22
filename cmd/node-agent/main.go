@@ -1,5 +1,6 @@
 // Command node-agent runs a single coordinator offer supplied as JSON on stdin,
-// or, with -serve, stays running so gpu-ctl can start, drain and reclaim work.
+// or, with -serve, stays running so gpu-ctl can start, drain and reclaim work
+// and, when configured, registers and heartbeats with the coordinator.
 package main
 
 import (
@@ -16,19 +17,23 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node/internal/agent"
 	"github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node/internal/allowlist"
+	"github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node/internal/config"
 	"github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node/internal/containerengine"
 	"github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node/internal/control"
+	"github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node/internal/coordinator"
 	"github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node/internal/lease"
 )
 
 func main() {
-	allowlistPath := flag.String("allowlist", "", "provider-owned JSON allowlist file (required)")
+	configPath := flag.String("config", "", "node config JSON file (coordinator, provider_id, tiers, heartbeat)")
+	allowlistPath := flag.String("allowlist", "", "provider-owned JSON allowlist file (required unless set in -config)")
 	showOutput := flag.Bool("show-output", false, "print bounded container logs to stderr after exit")
 	interactive := flag.Bool("interactive", false, "configure a local workload through the interactive menu")
-	serveMode := flag.Bool("serve", false, "keep the agent running for local gpu-ctl commands")
+	serveMode := flag.Bool("serve", false, "keep the agent running for local gpu-ctl commands and coordinator heartbeats")
 	socketPath := flag.String("socket", control.DefaultSocketPath(), "local control socket (with -serve)")
 	coordinatorConfig := registerCoordinatorFlags(flag.CommandLine)
 	flag.Parse()
@@ -38,22 +43,36 @@ func main() {
 	if coordinatorConfig.url != "" && !*serveMode {
 		log.Fatal("-coordinator requires -serve")
 	}
+	if coordinatorConfig.url != "" && *configPath != "" {
+		log.Fatal("-coordinator and -config cannot be used together")
+	}
+	var cfg config.Config
+	if coordinatorConfig.url == "" {
+		var err error
+		cfg, err = config.Load(*configPath)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+	if *allowlistPath != "" {
+		cfg.AllowlistPath = *allowlistPath
+	}
 	var input io.Reader = os.Stdin
 	if *interactive {
-		cfg, err := promptConfig(bufio.NewReader(os.Stdin), Config{Allowlist: *allowlistPath, ShowOutput: *showOutput})
+		menu, err := promptConfig(bufio.NewReader(os.Stdin), Config{Allowlist: cfg.AllowlistPath, ShowOutput: *showOutput})
 		if err != nil {
 			if errors.Is(err, errQuit) || errors.Is(err, io.EOF) {
 				return
 			}
 			log.Fatal(err)
 		}
-		offerFile, err := os.Open(cfg.OfferPath)
+		offerFile, err := os.Open(menu.OfferPath)
 		if err != nil {
 			log.Fatal(err)
 		}
 		defer offerFile.Close()
 		input = offerFile
-		*allowlistPath, *showOutput = cfg.Allowlist, cfg.ShowOutput
+		cfg.AllowlistPath, *showOutput = menu.Allowlist, menu.ShowOutput
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -62,31 +81,47 @@ func main() {
 		workloadOutput = os.Stderr
 	}
 	if *serveMode {
-		if err := serveWithHeartbeat(ctx, *allowlistPath, *socketPath, os.Stdout, workloadOutput, log.Default(), coordinatorConfig.heartbeat()); err != nil {
+		var err error
+		if coordinatorConfig.url != "" {
+			err = serveWithHeartbeat(ctx, cfg.AllowlistPath, *socketPath, os.Stdout, workloadOutput, log.Default(), coordinatorConfig.heartbeat(), false)
+		} else {
+			err = serve(ctx, cfg, *socketPath, os.Stdout, workloadOutput, log.Default())
+		}
+		if err != nil {
 			log.Fatal(err)
 		}
 		return
 	}
-	if err := run(ctx, *allowlistPath, input, os.Stdout, workloadOutput); err != nil {
+	if err := run(ctx, cfg.AllowlistPath, input, os.Stdout, workloadOutput); err != nil {
 		log.Fatal(err)
 	}
 }
 
+// discover is the capability discovery serve registers with; tests replace it.
+var discover discoverFunc = discoverCapabilities
+
 // serve runs the lease manager until ctx is cancelled, taking commands from
 // gpu-ctl on the control socket. Lease events are written to output as JSON
 // lines. Stopping the agent cancels and removes any running workload.
-func serve(ctx context.Context, path string, socketPath string, output io.Writer, workloadOutput io.Writer, logger *log.Logger) error {
-	return serveWithHeartbeat(ctx, path, socketPath, output, workloadOutput, logger, nil)
+//
+// When cfg names a coordinator, serve also registers and heartbeats on its
+// own goroutine (H3). The node refuses leases until registration succeeds
+// (R1), and serve fails if the node cannot register as configured.
+func serve(ctx context.Context, cfg config.Config, socketPath string, output io.Writer, workloadOutput io.Writer, logger *log.Logger) error {
+	var heartbeat *agent.Heartbeat
+	if cfg.Federated() {
+		client := coordinator.NewP16(cfg.CoordinatorURL, cfg.ProviderID, cfg.APIKey)
+		var err error
+		if heartbeat, err = newHeartbeat(ctx, cfg, client, discover, logger); err != nil {
+			return err
+		}
+		logger.Printf("heartbeating to %s every %s", cfg.CoordinatorURL, time.Duration(cfg.HeartbeatInterval))
+	}
+	return serveWithHeartbeat(ctx, cfg.AllowlistPath, socketPath, output, workloadOutput, logger, heartbeat, true)
 }
 
-// serveWithHeartbeat is serve with an optional coordinator heartbeat. While
-// the coordinator is unreachable the manager rejects new work.
-func serveWithHeartbeat(ctx context.Context, path string, socketPath string, output io.Writer, workloadOutput io.Writer, logger *log.Logger, heartbeat *agent.Heartbeat) error {
+func serveWithHeartbeat(ctx context.Context, path, socketPath string, output, workloadOutput io.Writer, logger *log.Logger, heartbeat *agent.Heartbeat, stopOnRegistrationFailure bool) error {
 	checker, err := allowlist.Load(path)
-	if err != nil {
-		return err
-	}
-	listener, err := control.Listen(socketPath)
 	if err != nil {
 		return err
 	}
@@ -94,20 +129,51 @@ func serveWithHeartbeat(ctx context.Context, path string, socketPath string, out
 	engine := containerengine.New(checker)
 	engine.Output = workloadOutput
 	manager := lease.NewManager(checker, engine, recorder)
+	server := control.NewServer(manager, recorder, checker.Entries(), logger)
+
+	listener, err := control.Listen(socketPath)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	heartbeatDone := make(chan struct{})
 	if heartbeat != nil {
-		heartbeatCtx, stopHeartbeat := context.WithCancel(ctx)
-		heartbeatDone := make(chan struct{})
+		manager.SetCoordinatorConnected(false)
+		heartbeat.OnRegistered = func() { manager.SetCoordinatorConnected(true) }
+		heartbeat.OnLost = func() {
+			manager.SetCoordinatorConnected(false)
+			logger.Print("coordinator lost; refusing new work")
+		}
+		heartbeat.OnRecovered = func() {
+			manager.SetCoordinatorConnected(true)
+			logger.Print("coordinator reachable again; accepting new work")
+		}
+		heartbeat.OnStatus = server.SetCoordinatorStatus
 		go func() {
 			defer close(heartbeatDone)
-			runHeartbeat(heartbeatCtx, manager, heartbeat, logger)
+			if err := heartbeat.Run(ctx); err != nil && ctx.Err() == nil {
+				// Removal keeps local controls online in either startup mode.
+				if stopOnRegistrationFailure && !errors.Is(err, coordinator.ErrRemoved) {
+					cancel(fmt.Errorf("coordinator: %w", err))
+				} else {
+					logger.Printf("coordinator heartbeat stopped; refusing new work: %v", err)
+				}
+			}
 		}()
-		defer func() {
-			stopHeartbeat()
-			<-heartbeatDone
-		}()
+	} else {
+		close(heartbeatDone)
 	}
 	logger.Printf("node agent listening on %s with %d approved image(s); control it with gpu-ctl", socketPath, len(checker.Entries()))
-	return control.NewServer(manager, recorder, checker.Entries(), logger).Serve(ctx, listener)
+	err = server.Serve(ctx, listener)
+	if err != nil {
+		cancel(err)
+	}
+	<-heartbeatDone
+	if cause := context.Cause(ctx); err == nil && cause != nil && !errors.Is(cause, context.Canceled) {
+		return cause
+	}
+	return err
 }
 
 // This local handoff exercises the lease boundary without inventing the remote

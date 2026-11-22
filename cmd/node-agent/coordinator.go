@@ -1,9 +1,7 @@
 package main
 
 import (
-	"context"
 	"flag"
-	"log"
 	"log/slog"
 	"os"
 	"strings"
@@ -11,7 +9,6 @@ import (
 
 	"github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node/internal/agent"
 	"github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node/internal/coordinator"
-	"github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node/internal/lease"
 )
 
 // coordinatorFlags configures the optional coordinator connection used with
@@ -69,27 +66,4 @@ func splitList(s string) []string {
 		return nil
 	}
 	return strings.Split(s, ",")
-}
-
-// runHeartbeat keeps the manager's coordinator connectivity in step with the
-// heartbeat until ctx is cancelled. The manager starts disconnected and only
-// takes new work once the coordinator has registered us. Running work is never
-// stopped here; losing the coordinator only stops new work.
-func runHeartbeat(ctx context.Context, manager *lease.Manager, heartbeat *agent.Heartbeat, logger *log.Logger) {
-	manager.SetCoordinatorConnected(false)
-	heartbeat.OnRegistered = func() { manager.SetCoordinatorConnected(true) }
-	heartbeat.OnRecovered = func() {
-		logger.Printf("coordinator reachable again; accepting new work")
-		manager.SetCoordinatorConnected(true)
-	}
-	heartbeat.OnLost = func() {
-		logger.Printf("coordinator lost; refusing new work until it is back")
-		manager.SetCoordinatorConnected(false)
-	}
-	if err := heartbeat.Run(ctx); err != nil {
-		// Removed from the federation or registration refused. Keep serving
-		// local status, drain and reclaim, but take no new work.
-		manager.SetCoordinatorConnected(false)
-		logger.Printf("coordinator heartbeat stopped; refusing new work: %v", err)
-	}
 }

@@ -8,6 +8,7 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -88,9 +89,9 @@ func TestP16RegisterConflictMeansAlreadyRegistered(t *testing.T) {
 }
 
 func TestP16HeartbeatPostsProviderTime(t *testing.T) {
-	client, got := fakeP16(t, http.StatusOK, `{}`)
-	if err := client.Heartbeat(context.Background()); err != nil {
-		t.Fatal(err)
+	client, got := fakeP16(t, http.StatusOK, `{"status":"ACTIVE"}`)
+	if status, err := client.Heartbeat(context.Background()); err != nil || status != "ACTIVE" {
+		t.Fatalf("heartbeat status = %q, err = %v", status, err)
 	}
 	req := onlyRequest(t, got)
 	if req.Path != "/providers/node-1/heartbeat" {
@@ -112,7 +113,7 @@ func TestP16HeartbeatStatusErrors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(http.StatusText(tt.status), func(t *testing.T) {
 			client, _ := fakeP16(t, tt.status, `{"error":{"code":"X","message":"y"}}`)
-			if err := client.Heartbeat(context.Background()); !errors.Is(err, tt.want) {
+			if _, err := client.Heartbeat(context.Background()); !errors.Is(err, tt.want) {
 				t.Fatalf("err = %v, want %v", err, tt.want)
 			}
 		})
@@ -121,7 +122,7 @@ func TestP16HeartbeatStatusErrors(t *testing.T) {
 
 func TestP16UnmappedErrorKeepsRawBody(t *testing.T) {
 	client, _ := fakeP16(t, http.StatusInternalServerError, `upstream exploded`)
-	err := client.Heartbeat(context.Background())
+	_, err := client.Heartbeat(context.Background())
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) {
 		t.Fatalf("err = %v, want *APIError", err)
@@ -202,6 +203,60 @@ func TestP16LeaseCallsTreatNotFoundAndConflictAsGone(t *testing.T) {
 			}
 			if err := client.Report(ctx, "lease-1", Result{Success: true}); !errors.Is(err, ErrLeaseGone) {
 				t.Errorf("Report err = %v, want ErrLeaseGone", err)
+			}
+		})
+	}
+}
+
+func TestP16RegisterSendsOnlyDocumentedFields(t *testing.T) {
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" || r.URL.Path != "/providers" || r.Header.Get("X-API-Key") != "k" {
+			t.Errorf("%s %s key=%q", r.Method, r.URL.Path, r.Header.Get("X-API-Key"))
+		}
+		json.NewDecoder(r.Body).Decode(&body)
+		w.WriteHeader(201)
+	}))
+	defer srv.Close()
+	err := NewP16(srv.URL, "n1", "k").Register(context.Background(), Registration{
+		Capabilities:  Capabilities{GPUModel: "RTX", VRAMMB: 8, DriverVersion: "1", Runtimes: []string{"podman"}},
+		AcceptedTiers: []string{"standard"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]any{
+		"provider_id": "n1",
+		"capabilities": map[string]any{
+			"gpu_model": "RTX", "vram_mb": float64(8), "driver_version": "1", "runtimes": []any{"podman"},
+		},
+		"accepted_tiers": []any{"standard"},
+	}
+	if !reflect.DeepEqual(body, want) {
+		t.Fatalf("body = %v", body)
+	}
+}
+
+func TestP16HeartbeatStatus(t *testing.T) {
+	for _, tc := range []struct {
+		body string
+		want ProviderStatus
+	}{
+		{`{"status":"ACTIVE"}`, "ACTIVE"},
+		{`{"status":"STALE"}`, "STALE"},
+		{`{"status":"DRAINING"}`, "DRAINING"},
+		{`{"status":"DRAINED"}`, ProviderDrained},
+		{`{"status":"UNKNOWN"}`, ""},
+		{`{}`, ""},
+	} {
+		t.Run(tc.body, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Write([]byte(tc.body))
+			}))
+			defer srv.Close()
+			status, err := NewP16(srv.URL, "n1", "").Heartbeat(context.Background())
+			if status != tc.want || (err != nil) != (tc.want == "") {
+				t.Fatalf("heartbeat status = %q, error = %v, want %q", status, err, tc.want)
 			}
 		})
 	}

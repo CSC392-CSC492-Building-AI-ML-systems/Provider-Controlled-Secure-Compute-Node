@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node/internal/allowlist"
+	"github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node/internal/coordinator"
 	"github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node/internal/lease"
 )
 
@@ -49,12 +50,13 @@ type Request struct {
 // Response is the node agent's reply. Every successful reply includes the
 // node's status after the command.
 type Response struct {
-	OK         bool              `json:"ok"`
-	Error      string            `json:"error,omitempty"`
-	State      lease.State       `json:"state,omitempty"`
-	Lease      *Lease            `json:"lease,omitempty"`
-	LastResult *Result           `json:"last_result,omitempty"`
-	Images     []allowlist.Entry `json:"images,omitempty"`
+	OK                bool                       `json:"ok"`
+	Error             string                     `json:"error,omitempty"`
+	State             lease.State                `json:"state,omitempty"`
+	CoordinatorStatus coordinator.ProviderStatus `json:"coordinator_status,omitempty"`
+	Lease             *Lease                     `json:"lease,omitempty"`
+	LastResult        *Result                    `json:"last_result,omitempty"`
+	Images            []allowlist.Entry          `json:"images,omitempty"`
 	// LeaseID is the lease started by CommandRun.
 	LeaseID string `json:"lease_id,omitempty"`
 }

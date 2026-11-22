@@ -1,8 +1,8 @@
 # Failure cases
 
 How the node should behave when something goes wrong. Local lease and Podman
-paths are implemented today; coordinator registration and heartbeat transport
-are still being wired (see [way-forward](way-forward.md) and
+paths are implemented today, including coordinator registration and heartbeat
+handling (see [way-forward](way-forward.md) and
 [coordinator requirements](coordinator-requirements.md)).
 
 ## Container crash or nonzero exit
@@ -41,26 +41,23 @@ state without a result event.
 default 15s), or the coordinator returns `404` (forgotten provider) /
 `409` after drain.
 
-**Behavior with `node-agent -serve -coordinator <url>`:**
+**Expected behavior:**
 
-1. The agent registers, retrying while the coordinator is down. Until
-   registration succeeds, new offers are rejected as `disconnected`.
-2. The heartbeat loop runs on its own goroutine, retries at the normal
-   interval (`-heartbeat`, default 5s) and logs each failure.
-3. After `-lost-after` (default 15s) without a successful beat, the agent
-   assumes its leases are revoked and **stops taking new work**: offers are
-   rejected as `disconnected` (reported to P16 as `TEMP_UNAVAILABLE`).
-   A job that is already running is left alone.
-4. On `404 NOT_FOUND` the coordinator has forgotten us: new work stops the
-   same way, and the agent re-registers.
-5. When a heartbeat or re-registration succeeds again, new work resumes.
-6. On `409` removed/drained, heartbeats stop and new work stays refused until
-   the agent is restarted. `gpu-ctl status`, drain and reclaim keep working.
+1. In federated mode, the node refuses leases until registration succeeds.
+   The heartbeat loop logs failures and retries at the configured interval.
+2. After `lost_after` (or `-lost-after` in flag mode), the node refuses new
+   leases and cancels the current
+   launch or wait so the workload can be removed. If cleanup fails, the lease
+   stays reserved for manual reclaim.
+3. On `404 NOT_FOUND`, the node immediately revokes its current lease and
+   attempts to re-register. Successful re-registration or a successful
+   heartbeat after a network outage restores lease admission once the prior
+   workload has been cleared.
+4. On `409`, the node shows `DRAINED` in `gpu-ctl status`, reclaims any active
+   lease, and stops heartbeating and taking leases. The local control socket
+   stays open. Restart the node agent to attempt registration again.
 
-**Not yet done:** stopping the running container on loss (H10 in the
-[coordinator requirements](coordinator-requirements.md)). Use provider reclaim
-as the emergency stop. Without `-coordinator` the agent has no heartbeat and
-local jobs run as before.
+The coordinator field in `gpu-ctl status` shows the last reported status.
 
 ## Emergency reclaim
 
