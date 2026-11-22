@@ -23,7 +23,10 @@ type Heartbeat struct {
 	// OnLost runs on the heartbeat goroutine, once per outage, when our leases
 	// are probably revoked: no heartbeat for LostAfter, or the coordinator forgot us.
 	OnLost func()
-	Log    *slog.Logger
+	// OnRecovered runs on the heartbeat goroutine after an OnLost, once the
+	// coordinator accepts a heartbeat or re-registration again.
+	OnRecovered func()
+	Log         *slog.Logger
 }
 
 // Run registers, then heartbeats until ctx is cancelled (returns nil) or the
@@ -46,6 +49,10 @@ func (h *Heartbeat) Run(ctx context.Context) error {
 		err := h.Client.Heartbeat(ctx)
 		switch {
 		case err == nil:
+			if lost {
+				h.Log.Info("coordinator reachable again")
+				h.OnRecovered()
+			}
 			last, lost = time.Now(), false
 		case ctx.Err() != nil:
 			return nil
@@ -63,6 +70,7 @@ func (h *Heartbeat) Run(ctx context.Context) error {
 				h.Log.Warn("re-register failed", "err", err)
 			} else {
 				last, lost = time.Now(), false
+				h.OnRecovered()
 			}
 		default:
 			h.Log.Warn("heartbeat failed", "err", err, "since_last_ok", time.Since(last).Round(time.Millisecond))
@@ -84,6 +92,9 @@ func (h *Heartbeat) defaults() {
 	}
 	if h.OnLost == nil {
 		h.OnLost = func() {}
+	}
+	if h.OnRecovered == nil {
+		h.OnRecovered = func() {}
 	}
 	if h.Log == nil {
 		h.Log = slog.Default()

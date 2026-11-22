@@ -48,6 +48,14 @@ func pop(errs *[]error) error {
 
 func runHeartbeat(t *testing.T, f *fakeCoordinator, d time.Duration) (err error, lost int) {
 	t.Helper()
+	err, lost, _ = runHeartbeatEvents(t, f, d)
+	return err, lost
+}
+
+// runHeartbeatEvents also counts OnRecovered calls and checks that they
+// never outnumber OnLost calls or arrive before one.
+func runHeartbeatEvents(t *testing.T, f *fakeCoordinator, d time.Duration) (err error, lost, recovered int) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), d)
 	defer cancel()
 	h := &Heartbeat{
@@ -55,9 +63,15 @@ func runHeartbeat(t *testing.T, f *fakeCoordinator, d time.Duration) (err error,
 		Interval:  5 * time.Millisecond,
 		LostAfter: 30 * time.Millisecond,
 		OnLost:    func() { lost++ },
-		Log:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+		OnRecovered: func() {
+			recovered++
+			if recovered > lost {
+				t.Errorf("OnRecovered called %d times after only %d OnLost", recovered, lost)
+			}
+		},
+		Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
-	return h.Run(ctx), lost
+	return h.Run(ctx), lost, recovered
 }
 
 var (
@@ -122,6 +136,33 @@ func TestHeartbeat(t *testing.T) {
 		err, _ := runHeartbeat(t, f, time.Second)
 		if !errors.Is(err, coordinator.ErrRemoved) || f.heartbeats != 1 {
 			t.Fatalf("err=%v heartbeats=%d", err, f.heartbeats)
+		}
+	})
+
+	t.Run("recovers once after an outage ends", func(t *testing.T) {
+		f := &fakeCoordinator{heartbeatErrs: make([]error, 15)}
+		for i := range f.heartbeatErrs {
+			f.heartbeatErrs[i] = netErr
+		}
+		err, lost, recovered := runHeartbeatEvents(t, f, 150*time.Millisecond)
+		if err != nil || lost != 1 || recovered != 1 {
+			t.Fatalf("err=%v lost=%d recovered=%d", err, lost, recovered)
+		}
+	})
+
+	t.Run("recovers after re-registering with a forgetful coordinator", func(t *testing.T) {
+		f := &fakeCoordinator{heartbeatErrs: []error{coordinator.ErrUnknownProvider}}
+		err, lost, recovered := runHeartbeatEvents(t, f, 50*time.Millisecond)
+		if err != nil || lost != 1 || recovered != 1 {
+			t.Fatalf("err=%v lost=%d recovered=%d", err, lost, recovered)
+		}
+	})
+
+	t.Run("short blip does not report recovery", func(t *testing.T) {
+		f := &fakeCoordinator{heartbeatErrs: []error{netErr}}
+		_, _, recovered := runHeartbeatEvents(t, f, 50*time.Millisecond)
+		if recovered != 0 {
+			t.Fatalf("recovered=%d", recovered)
 		}
 	})
 }
