@@ -987,3 +987,32 @@ func TestResumeEndsDrain(t *testing.T) {
 		t.Fatalf("State() after resuming with active work = %q, want %q", manager.State(), StateRunning)
 	}
 }
+
+func TestDisconnectedRejectsOffersUntilReconnected(t *testing.T) {
+	fixedNow := time.Date(2026, time.October, 19, 12, 0, 0, 0, time.UTC)
+	coordinator := &stubCoordinator{}
+	engine := &stubContainerEngine{workload: &controlledWorkload{}}
+	manager := NewManager(&stubAllowlist{allowed: true}, engine, coordinator)
+	manager.now = func() time.Time { return fixedNow }
+	offer := func(id string) Offer {
+		return Offer{ID: id, ImageDigest: "sha256:approved", ExpiresAt: fixedNow.Add(time.Minute)}
+	}
+
+	manager.SetCoordinatorConnected(false)
+	err := manager.ReceiveOffer(context.Background(), offer("lease-1"))
+	var rejection *OfferRejectedError
+	if !errors.As(err, &rejection) || rejection.Reason != RejectionDisconnected {
+		t.Fatalf("ReceiveOffer() while disconnected = %v, want %q rejection", err, RejectionDisconnected)
+	}
+	if len(engine.launchedDigests) != 0 || manager.State() != StateIdle {
+		t.Fatalf("launches=%d state=%q", len(engine.launchedDigests), manager.State())
+	}
+
+	manager.SetCoordinatorConnected(true)
+	if err := manager.ReceiveOffer(context.Background(), offer("lease-2")); err != nil {
+		t.Fatalf("ReceiveOffer() after reconnect = %v", err)
+	}
+	if len(coordinator.accepted) != 1 || coordinator.accepted[0] != "lease-2" {
+		t.Fatalf("accepted = %v, want [lease-2]", coordinator.accepted)
+	}
+}

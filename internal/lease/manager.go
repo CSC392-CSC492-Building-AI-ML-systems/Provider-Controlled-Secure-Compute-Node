@@ -36,6 +36,9 @@ type Manager struct {
 	waitDone chan struct{}
 	// reclaimed tells an in-progress Wait that Reclaim killed its workload.
 	reclaimed bool
+	// disconnected means the coordinator cannot be reached, so any lease we
+	// accepted may already be revoked. Local-only nodes never set it.
+	disconnected bool
 }
 
 // NewManager wires the lease manager to its external dependencies.
@@ -153,6 +156,9 @@ func (manager *Manager) availabilityRejection() RejectionReason {
 	manager.mu.RLock()
 	defer manager.mu.RUnlock()
 
+	if manager.disconnected {
+		return RejectionDisconnected
+	}
 	if manager.state == StateDraining {
 		return RejectionDraining
 	}
@@ -166,6 +172,9 @@ func (manager *Manager) reserveAcceptedOffer(offer Offer) RejectionReason {
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
 
+	if manager.disconnected {
+		return RejectionDisconnected
+	}
 	if manager.state == StateDraining {
 		return RejectionDraining
 	}
@@ -359,9 +368,14 @@ func (manager *Manager) reportReclaimed(active Active) error {
 	return nil
 }
 
-// SetCoordinatorConnected records coordinator connectivity changes.
-func (manager *Manager) SetCoordinatorConnected(_ bool) {
-	// Intentionally left as a lifecycle implementation point.
+// SetCoordinatorConnected records coordinator connectivity changes. While
+// disconnected, new offers are rejected with RejectionDisconnected; the
+// running workload, if any, is left to the caller to reclaim.
+func (manager *Manager) SetCoordinatorConnected(connected bool) {
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+
+	manager.disconnected = !connected
 }
 
 // State returns the manager's current lifecycle state.
