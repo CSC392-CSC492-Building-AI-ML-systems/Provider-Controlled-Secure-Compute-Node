@@ -95,12 +95,45 @@ Before lending a real GPU:
    reclaim, drain).
 3. On Linux, run `./scripts/smoke-podman.sh`.
 
-## 7. Federation (when coordinator is available)
+## 7. Federation (registration and heartbeat)
 
-Registration, heartbeat interval, API key, and accepted tiers are loaded from
-configuration (see `internal/config`). Protocol expectations are in
-[way-forward](way-forward.md) (coordinator client still pending). Until that path is
-connected in your environment, keep using local offers and `gpu-ctl`.
+Copy [examples/node-config.json](../examples/node-config.json) and pass it to
+serve mode:
+
+```sh
+export NODE_API_KEY=...          # optional; overrides api_key in the file
+/tmp/node-agent -serve -config /path/to/node-config.json
+```
+
+`-allowlist` on the command line overrides `allowlist` in the file. Unknown
+fields are rejected, so a typo fails loudly instead of falling back to a default.
+
+| Field | Default | Notes |
+| --- | --- | --- |
+| `coordinator_url` | none (local-only) | Setting it turns on registration and heartbeats |
+| `provider_id` | lowercase hostname | Must stay the same across restarts (R2) |
+| `accepted_tiers` | none, required | Job tiers you will run (R5) |
+| `runtimes` | `[]` | Advertised alongside the detected `podman`, e.g. `"ollama"` (R8) |
+| `cpu_only` | `false` | Let a machine with no GPU register (see below) |
+| `heartbeat_interval` | `5s` | H2 |
+| `lost_after` | `15s` | Must be longer than `heartbeat_interval` (H10) |
+| `api_key` | none | Sent as `X-API-Key`; prefer `NODE_API_KEY` |
+
+On startup the agent runs capability discovery (`nvidia-smi`, Podman) and
+registers `gpu_model`, `vram_mb`, `driver_version`, and `runtimes` (R4). It
+refuses leases until registration succeeds, then heartbeats on its own
+goroutine. Handling a lost heartbeat, recovery, and removal is still being
+wired (see [way-forward](way-forward.md)).
+
+The agent refuses to start when it cannot register honestly:
+
+- **No GPU** and `cpu_only` unset. The coordinator rejects `vram_mb = 0` (R3).
+  With `cpu_only: true` the node registers `gpu_model: "cpu"`,
+  `vram_mb: <system RAM>` and `driver_version: "none"`. Use this for a CPU
+  demo, and only for jobs that fit in RAM.
+- **No rootless Podman.** Every job runs in it.
+- **A `4xx` registration reply** from the coordinator, e.g. a tier or runtime
+  it does not accept.
 
 ## Related docs
 
