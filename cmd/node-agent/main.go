@@ -1,5 +1,6 @@
 // Command node-agent runs a single coordinator offer supplied as JSON on stdin,
-// or, with -serve, stays running so gpu-ctl can start, drain and reclaim work.
+// or, with -serve, stays running so gpu-ctl can start, drain and reclaim work
+// and, when configured, registers and heartbeats with the coordinator.
 package main
 
 import (
@@ -16,34 +17,51 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
+	"time"
 
+	"github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node/internal/agent"
 	"github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node/internal/allowlist"
+	"github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node/internal/config"
 	"github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node/internal/containerengine"
 	"github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node/internal/control"
+	"github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node/internal/coordinator"
 	"github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node/internal/lease"
 )
 
 func main() {
-	allowlistPath := flag.String("allowlist", "", "provider-owned JSON allowlist file (required)")
+	configPath := flag.String("config", "", "node config JSON file (coordinator, provider_id, tiers, heartbeat); omit for local-only")
+	allowlistPath := flag.String("allowlist", "", "provider-owned JSON allowlist file (required unless set in -config)")
 	showOutput := flag.Bool("show-output", false, "print bounded container logs to stderr after exit")
 	interactive := flag.Bool("interactive", false, "configure a local workload through the interactive menu")
+	serveMode := flag.Bool("serve", false, "keep the agent running for local gpu-ctl commands and coordinator heartbeats")
+	socketPath := flag.String("socket", control.DefaultSocketPath(), "local control socket (with -serve)")
 	flag.Parse()
+	if *serveMode && *interactive {
+		log.Fatal("-serve and -interactive cannot be used together")
+	}
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if *allowlistPath != "" {
+		cfg.AllowlistPath = *allowlistPath
+	}
 	var input io.Reader = os.Stdin
 	if *interactive {
-		cfg, err := promptConfig(bufio.NewReader(os.Stdin), Config{Allowlist: *allowlistPath, ShowOutput: *showOutput})
+		menu, err := promptConfig(bufio.NewReader(os.Stdin), Config{Allowlist: cfg.AllowlistPath, ShowOutput: *showOutput})
 		if err != nil {
 			if errors.Is(err, errQuit) || errors.Is(err, io.EOF) {
 				return
 			}
 			log.Fatal(err)
 		}
-		offerFile, err := os.Open(cfg.OfferPath)
+		offerFile, err := os.Open(menu.OfferPath)
 		if err != nil {
 			log.Fatal(err)
 		}
 		defer offerFile.Close()
 		input = offerFile
-		*allowlistPath, *showOutput = cfg.Allowlist, cfg.ShowOutput
+		cfg.AllowlistPath, *showOutput = menu.Allowlist, menu.ShowOutput
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -51,20 +69,29 @@ func main() {
 	if *showOutput {
 		workloadOutput = os.Stderr
 	}
-	if err := run(ctx, *allowlistPath, input, os.Stdout, workloadOutput); err != nil {
+	if *serveMode {
+		if err := serve(ctx, cfg, *socketPath, os.Stdout, workloadOutput, log.Default()); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	if err := run(ctx, cfg.AllowlistPath, input, os.Stdout, workloadOutput); err != nil {
 		log.Fatal(err)
 	}
 }
 
+// discover is the capability discovery serve registers with; tests replace it.
+var discover discoverFunc = discoverCapabilities
+
 // serve runs the lease manager until ctx is cancelled, taking commands from
 // gpu-ctl on the control socket. Lease events are written to output as JSON
 // lines. Stopping the agent cancels and removes any running workload.
-func serve(ctx context.Context, path string, socketPath string, output io.Writer, workloadOutput io.Writer, logger *log.Logger) error {
-	checker, err := allowlist.Load(path)
-	if err != nil {
-		return err
-	}
-	listener, err := control.Listen(socketPath)
+//
+// When cfg names a coordinator, serve also registers and heartbeats on its
+// own goroutine (H3). The node refuses leases until registration succeeds
+// (R1), and serve fails if the node cannot register as configured.
+func serve(ctx context.Context, cfg config.Config, socketPath string, output io.Writer, workloadOutput io.Writer, logger *log.Logger) error {
+	checker, err := allowlist.Load(cfg.AllowlistPath)
 	if err != nil {
 		return err
 	}
@@ -72,8 +99,43 @@ func serve(ctx context.Context, path string, socketPath string, output io.Writer
 	engine := containerengine.New(checker)
 	engine.Output = workloadOutput
 	manager := lease.NewManager(checker, engine, recorder)
+	server := control.NewServer(manager, recorder, checker.Entries(), logger)
+
+	var heartbeat *agent.Heartbeat
+	if cfg.Federated() {
+		client := coordinator.NewP16(cfg.CoordinatorURL, cfg.ProviderID, cfg.APIKey)
+		if heartbeat, err = newHeartbeat(ctx, cfg, client, manager, discover, logger); err != nil {
+			return err
+		}
+	}
+
+	listener, err := control.Listen(socketPath)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	heartbeatDone := make(chan struct{})
+	if heartbeat != nil {
+		logger.Printf("heartbeating to %s every %s", cfg.CoordinatorURL, time.Duration(cfg.HeartbeatInterval))
+		go func() {
+			defer close(heartbeatDone)
+			// A rejected registration stops the node. Removal by the
+			// coordinator (ErrRemoved, H6) currently stops it too.
+			if err := heartbeat.Run(ctx); err != nil && ctx.Err() == nil {
+				cancel(fmt.Errorf("coordinator: %w", err))
+			}
+		}()
+	} else {
+		close(heartbeatDone)
+	}
 	logger.Printf("node agent listening on %s with %d approved image(s); control it with gpu-ctl", socketPath, len(checker.Entries()))
-	return control.NewServer(manager, recorder, checker.Entries(), logger).Serve(ctx, listener)
+	err = server.Serve(ctx, listener)
+	<-heartbeatDone
+	if cause := context.Cause(ctx); err == nil && cause != nil && !errors.Is(cause, context.Canceled) {
+		return cause
+	}
+	return err
 }
 
 // This local handoff exercises the lease boundary without inventing the remote
