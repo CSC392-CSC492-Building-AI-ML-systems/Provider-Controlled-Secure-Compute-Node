@@ -36,6 +36,9 @@ type Manager struct {
 	waitDone chan struct{}
 	// reclaimed tells an in-progress Wait that Reclaim killed its workload.
 	reclaimed bool
+	// disconnected is set while the coordinator is unreachable. It starts
+	// false so the local, coordinator-less mode accepts offers as before.
+	disconnected bool
 }
 
 // NewManager wires the lease manager to its external dependencies.
@@ -156,6 +159,9 @@ func (manager *Manager) availabilityRejection() RejectionReason {
 	if manager.state == StateDraining {
 		return RejectionDraining
 	}
+	if manager.disconnected {
+		return RejectionDisconnected
+	}
 	if manager.activeLease != nil || manager.state == StateRunning {
 		return RejectionAlreadyActive
 	}
@@ -168,6 +174,9 @@ func (manager *Manager) reserveAcceptedOffer(offer Offer) RejectionReason {
 
 	if manager.state == StateDraining {
 		return RejectionDraining
+	}
+	if manager.disconnected {
+		return RejectionDisconnected
 	}
 	if manager.activeLease != nil || manager.state == StateRunning {
 		return RejectionAlreadyActive
@@ -359,9 +368,24 @@ func (manager *Manager) reportReclaimed(active Active) error {
 	return nil
 }
 
-// SetCoordinatorConnected records coordinator connectivity changes.
-func (manager *Manager) SetCoordinatorConnected(_ bool) {
-	// Intentionally left as a lifecycle implementation point.
+// SetCoordinatorConnected records whether the coordinator is reachable.
+// While it is not, new offers are rejected as disconnected: the coordinator
+// has probably revoked our leases and requeued their jobs, so starting new
+// work would run jobs nobody is waiting for. Work already running is left
+// alone.
+func (manager *Manager) SetCoordinatorConnected(connected bool) {
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+
+	manager.disconnected = !connected
+}
+
+// CoordinatorConnected reports whether the coordinator is currently reachable.
+func (manager *Manager) CoordinatorConnected() bool {
+	manager.mu.RLock()
+	defer manager.mu.RUnlock()
+
+	return !manager.disconnected
 }
 
 // State returns the manager's current lifecycle state.
