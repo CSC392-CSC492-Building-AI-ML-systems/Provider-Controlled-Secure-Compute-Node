@@ -1,0 +1,10 @@
+{
+  "coordinator_url": "http://127.0.0.1:8000",
+  "provider_id": "dh2020pc08",
+  "accepted_tiers": ["standard"],
+  "runtimes": ["ollama"],
+  "cpu_only": false,
+  "heartbeat_interval": "5s",
+  "lost_after": "15s",
+  "allowlist": "/path/to/allowlist.json"
+}
