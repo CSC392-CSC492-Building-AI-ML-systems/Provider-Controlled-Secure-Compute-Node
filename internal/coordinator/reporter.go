@@ -2,9 +2,12 @@ package coordinator
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node/internal/lease"
 )
+
+var _ lease.Coordinator = (*LeaseReporter)(nil)
 
 // LeaseReporter lets the lease manager report its decisions to a coordinator.
 // The lease package speaks in node terms (lease.RejectionReason, lease.Outcome);
@@ -44,5 +47,35 @@ func rejectReason(reason lease.RejectionReason) RejectReason {
 		return RejectLocalBusy
 	default: // draining, disconnected, expired, and anything added later
 		return RejectTempUnavailable
+	}
+}
+
+// ReportResult tells the coordinator how a lease ended.
+func (r *LeaseReporter) ReportResult(ctx context.Context, result lease.Result) error {
+	mapped, err := leaseResult(result)
+	if err != nil {
+		return err
+	}
+	return r.Client.Report(ctx, result.LeaseID, mapped)
+}
+
+// leaseResult maps a node outcome onto the coordinator's SUCCESS/FAILURE
+// report (docs/coordinator-requirements.md L7, D4). A failure with an exit
+// code means the job itself failed; without one, the node could not run or
+// collect it. P16 has no reason for expiry or reclaim yet, so both are
+// reported as RUNTIME_ERROR.
+func leaseResult(result lease.Result) (Result, error) {
+	switch result.Outcome {
+	case lease.OutcomeCompleted:
+		return Result{Success: true}, nil
+	case lease.OutcomeFailed:
+		if result.ExitCode != nil {
+			return Result{Reason: FailExecution}, nil
+		}
+		return Result{Reason: FailRuntime}, nil
+	case lease.OutcomeExpired, lease.OutcomeReclaimed:
+		return Result{Reason: FailRuntime}, nil
+	default:
+		return Result{}, fmt.Errorf("lease %s: outcome %q cannot be reported as a result", result.LeaseID, result.Outcome)
 	}
 }
