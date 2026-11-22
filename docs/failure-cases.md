@@ -43,8 +43,10 @@ default 15s), or the coordinator returns `404` (forgotten provider) /
 
 **Expected behavior:**
 
-1. The heartbeat loop logs failures and retries at the configured interval.
-2. After `lost_after`, the node refuses new leases and cancels the current
+1. In federated mode, the node refuses leases until registration succeeds.
+   The heartbeat loop logs failures and retries at the configured interval.
+2. After `lost_after` (or `-lost-after` in flag mode), the node refuses new
+   leases and cancels the current
    launch or wait so the workload can be removed. If cleanup fails, the lease
    stays reserved for manual reclaim.
 3. On `404 NOT_FOUND`, the node immediately revokes its current lease and

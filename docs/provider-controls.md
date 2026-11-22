@@ -3,8 +3,7 @@
 This document describes the provider-side controls currently implemented in this
 repository. They are enforced by the in-process lease manager and container
 engine. The provider reaches a running node agent through `gpu-ctl` over a
-local Unix socket (see [Local provider CLI](#local-provider-cli)). The
-repository does not currently implement a network coordinator connection.
+local Unix socket (see [Local provider CLI](#local-provider-cli)).
 
 ## Control summary
 
@@ -18,8 +17,9 @@ repository does not currently implement a network coordinator connection.
 | Run | Starts an approved image chosen by the provider as a local lease | `gpu-ctl run`, for local testing and demos; the coordinator chooses jobs in the real flow |
 
 The current local command and its limitations are documented in the
-[Podman execution guide](podman-execution.md). The coordinator client,
-registration, and heartbeat transport are placeholders.
+[Podman execution guide](podman-execution.md). A federated agent refuses new
+work, including `gpu-ctl run`, when it loses the coordinator. Use
+`gpu-ctl status` to see the coordinator's last reported status.
 
 ## Allowlist control
 

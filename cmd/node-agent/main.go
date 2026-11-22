@@ -29,19 +29,30 @@ import (
 )
 
 func main() {
-	configPath := flag.String("config", "", "node config JSON file (coordinator, provider_id, tiers, heartbeat); omit for local-only")
+	configPath := flag.String("config", "", "node config JSON file (coordinator, provider_id, tiers, heartbeat)")
 	allowlistPath := flag.String("allowlist", "", "provider-owned JSON allowlist file (required unless set in -config)")
 	showOutput := flag.Bool("show-output", false, "print bounded container logs to stderr after exit")
 	interactive := flag.Bool("interactive", false, "configure a local workload through the interactive menu")
 	serveMode := flag.Bool("serve", false, "keep the agent running for local gpu-ctl commands and coordinator heartbeats")
 	socketPath := flag.String("socket", control.DefaultSocketPath(), "local control socket (with -serve)")
+	coordinatorConfig := registerCoordinatorFlags(flag.CommandLine)
 	flag.Parse()
 	if *serveMode && *interactive {
 		log.Fatal("-serve and -interactive cannot be used together")
 	}
-	cfg, err := config.Load(*configPath)
-	if err != nil {
-		log.Fatal(err)
+	if coordinatorConfig.url != "" && !*serveMode {
+		log.Fatal("-coordinator requires -serve")
+	}
+	if coordinatorConfig.url != "" && *configPath != "" {
+		log.Fatal("-coordinator and -config cannot be used together")
+	}
+	var cfg config.Config
+	if coordinatorConfig.url == "" {
+		var err error
+		cfg, err = config.Load(*configPath)
+		if err != nil {
+			log.Fatal(err)
+		}
 	}
 	if *allowlistPath != "" {
 		cfg.AllowlistPath = *allowlistPath
@@ -70,7 +81,13 @@ func main() {
 		workloadOutput = os.Stderr
 	}
 	if *serveMode {
-		if err := serve(ctx, cfg, *socketPath, os.Stdout, workloadOutput, log.Default()); err != nil {
+		var err error
+		if coordinatorConfig.url != "" {
+			err = serveWithHeartbeat(ctx, cfg.AllowlistPath, *socketPath, os.Stdout, workloadOutput, log.Default(), coordinatorConfig.heartbeat(), false)
+		} else {
+			err = serve(ctx, cfg, *socketPath, os.Stdout, workloadOutput, log.Default())
+		}
+		if err != nil {
 			log.Fatal(err)
 		}
 		return
@@ -91,7 +108,20 @@ var discover discoverFunc = discoverCapabilities
 // own goroutine (H3). The node refuses leases until registration succeeds
 // (R1), and serve fails if the node cannot register as configured.
 func serve(ctx context.Context, cfg config.Config, socketPath string, output io.Writer, workloadOutput io.Writer, logger *log.Logger) error {
-	checker, err := allowlist.Load(cfg.AllowlistPath)
+	var heartbeat *agent.Heartbeat
+	if cfg.Federated() {
+		client := coordinator.NewP16(cfg.CoordinatorURL, cfg.ProviderID, cfg.APIKey)
+		var err error
+		if heartbeat, err = newHeartbeat(ctx, cfg, client, discover, logger); err != nil {
+			return err
+		}
+		logger.Printf("heartbeating to %s every %s", cfg.CoordinatorURL, time.Duration(cfg.HeartbeatInterval))
+	}
+	return serveWithHeartbeat(ctx, cfg.AllowlistPath, socketPath, output, workloadOutput, logger, heartbeat, true)
+}
+
+func serveWithHeartbeat(ctx context.Context, path, socketPath string, output, workloadOutput io.Writer, logger *log.Logger, heartbeat *agent.Heartbeat, stopOnRegistrationFailure bool) error {
+	checker, err := allowlist.Load(path)
 	if err != nil {
 		return err
 	}
@@ -101,15 +131,6 @@ func serve(ctx context.Context, cfg config.Config, socketPath string, output io.
 	manager := lease.NewManager(checker, engine, recorder)
 	server := control.NewServer(manager, recorder, checker.Entries(), logger)
 
-	var heartbeat *agent.Heartbeat
-	if cfg.Federated() {
-		client := coordinator.NewP16(cfg.CoordinatorURL, cfg.ProviderID, cfg.APIKey)
-		if heartbeat, err = newHeartbeat(ctx, cfg, client, manager, discover, logger); err != nil {
-			return err
-		}
-		heartbeat.OnStatus = server.SetCoordinatorStatus
-	}
-
 	listener, err := control.Listen(socketPath)
 	if err != nil {
 		return err
@@ -118,13 +139,26 @@ func serve(ctx context.Context, cfg config.Config, socketPath string, output io.
 	defer cancel(nil)
 	heartbeatDone := make(chan struct{})
 	if heartbeat != nil {
-		logger.Printf("heartbeating to %s every %s", cfg.CoordinatorURL, time.Duration(cfg.HeartbeatInterval))
+		manager.SetCoordinatorConnected(false)
+		heartbeat.OnRegistered = func() { manager.SetCoordinatorConnected(true) }
+		heartbeat.OnLost = func() {
+			manager.SetCoordinatorConnected(false)
+			logger.Print("coordinator lost; refusing new work")
+		}
+		heartbeat.OnRecovered = func() {
+			manager.SetCoordinatorConnected(true)
+			logger.Print("coordinator reachable again; accepting new work")
+		}
+		heartbeat.OnStatus = server.SetCoordinatorStatus
 		go func() {
 			defer close(heartbeatDone)
-			// Rejected startup registration is fatal. Removal stops only
-			// federation activity so local controls remain available (H6).
-			if err := heartbeat.Run(ctx); err != nil && !errors.Is(err, coordinator.ErrRemoved) && ctx.Err() == nil {
-				cancel(fmt.Errorf("coordinator: %w", err))
+			if err := heartbeat.Run(ctx); err != nil && ctx.Err() == nil {
+				// Removal keeps local controls online in either startup mode.
+				if stopOnRegistrationFailure && !errors.Is(err, coordinator.ErrRemoved) {
+					cancel(fmt.Errorf("coordinator: %w", err))
+				} else {
+					logger.Printf("coordinator heartbeat stopped; refusing new work: %v", err)
+				}
 			}
 		}()
 	} else {

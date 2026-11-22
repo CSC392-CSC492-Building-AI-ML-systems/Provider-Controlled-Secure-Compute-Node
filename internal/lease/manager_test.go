@@ -988,32 +988,100 @@ func TestResumeEndsDrain(t *testing.T) {
 	}
 }
 
-func TestDisconnectedRejectsOffersUntilReconnected(t *testing.T) {
-	fixedNow := time.Date(2026, time.October, 19, 12, 0, 0, 0, time.UTC)
+func TestDisconnectedCoordinatorRejectsNewOffersUntilReconnected(t *testing.T) {
+	fixedNow := time.Date(2026, time.November, 21, 12, 0, 0, 0, time.UTC)
 	coordinator := &stubCoordinator{}
-	engine := &stubContainerEngine{workload: &controlledWorkload{}}
+	engine := &stubContainerEngine{}
 	manager := NewManager(&stubAllowlist{allowed: true}, engine, coordinator)
 	manager.now = func() time.Time { return fixedNow }
 	offer := func(id string) Offer {
 		return Offer{ID: id, ImageDigest: "sha256:approved", ExpiresAt: fixedNow.Add(time.Minute)}
 	}
 
+	if !manager.CoordinatorConnected() {
+		t.Fatal("new manager should start connected")
+	}
 	manager.SetCoordinatorConnected(false)
+	if manager.CoordinatorConnected() {
+		t.Fatal("CoordinatorConnected() = true after disconnect")
+	}
+
 	err := manager.ReceiveOffer(context.Background(), offer("lease-1"))
 	var rejection *OfferRejectedError
 	if !errors.As(err, &rejection) || rejection.Reason != RejectionDisconnected {
-		t.Fatalf("ReceiveOffer() while disconnected = %v, want %q rejection", err, RejectionDisconnected)
+		t.Fatalf("ReceiveOffer() error = %v, want disconnected rejection", err)
 	}
-	if len(engine.launchedDigests) != 0 || manager.State() != StateIdle {
-		t.Fatalf("launches=%d state=%q", len(engine.launchedDigests), manager.State())
+	if len(engine.launchedDigests) != 0 {
+		t.Fatalf("Launch() calls = %d, want 0", len(engine.launchedDigests))
+	}
+	if manager.State() != StateIdle {
+		t.Fatalf("State() = %q, want %q", manager.State(), StateIdle)
 	}
 
 	manager.SetCoordinatorConnected(true)
 	if err := manager.ReceiveOffer(context.Background(), offer("lease-2")); err != nil {
-		t.Fatalf("ReceiveOffer() after reconnect = %v", err)
+		t.Fatalf("ReceiveOffer() after reconnect returned %v", err)
 	}
 	if len(coordinator.accepted) != 1 || coordinator.accepted[0] != "lease-2" {
 		t.Fatalf("accepted = %v, want [lease-2]", coordinator.accepted)
+	}
+}
+
+func TestDisconnectReclaimsRunningWork(t *testing.T) {
+	coordinator := &stubCoordinator{}
+	workload := newBlockingWorkload()
+	manager := NewManager(&stubAllowlist{allowed: true}, &stubContainerEngine{workload: workload}, coordinator)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	if err := manager.ReceiveOffer(ctx, Offer{
+		ID: "lease-1", ImageDigest: "sha256:approved", ExpiresAt: time.Now().Add(time.Minute),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- manager.Wait(ctx) }()
+	select {
+	case <-workload.waiting:
+	case <-ctx.Done():
+		t.Fatal("workload did not start waiting")
+	}
+	manager.SetCoordinatorConnected(false)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-ctx.Done():
+		t.Fatal("workload did not stop after disconnect")
+	}
+	select {
+	case <-workload.stopped:
+	default:
+		t.Fatal("workload not removed")
+	}
+	if manager.State() != StateIdle || len(coordinator.results) != 1 ||
+		coordinator.results[0].Outcome != OutcomeReclaimed {
+		t.Fatalf("state = %q, results = %+v", manager.State(), coordinator.results)
+	}
+}
+
+func TestDrainingTakesPriorityOverDisconnected(t *testing.T) {
+	fixedNow := time.Date(2026, time.November, 21, 12, 0, 0, 0, time.UTC)
+	coordinator := &stubCoordinator{}
+	manager := NewManager(&stubAllowlist{allowed: true}, &stubContainerEngine{}, coordinator)
+	manager.now = func() time.Time { return fixedNow }
+	manager.SetCoordinatorConnected(false)
+	if err := manager.Drain(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	err := manager.ReceiveOffer(context.Background(), Offer{
+		ID: "lease-1", ImageDigest: "sha256:approved", ExpiresAt: fixedNow.Add(time.Minute),
+	})
+	var rejection *OfferRejectedError
+	if !errors.As(err, &rejection) || rejection.Reason != RejectionDraining {
+		t.Fatalf("ReceiveOffer() error = %v, want draining rejection", err)
 	}
 }
 

@@ -51,12 +51,17 @@ func runHeartbeat(t *testing.T, f *fakeCoordinator, d time.Duration) (err error,
 	ctx, cancel := context.WithTimeout(context.Background(), d)
 	defer cancel()
 	h := &Heartbeat{
-		Client:      f,
-		Interval:    5 * time.Millisecond,
-		LostAfter:   30 * time.Millisecond,
-		OnLost:      func() { lost++ },
-		OnRecovered: func() { recovered++ },
-		Log:         slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Client:    f,
+		Interval:  5 * time.Millisecond,
+		LostAfter: 30 * time.Millisecond,
+		OnLost:    func() { lost++ },
+		OnRecovered: func() {
+			recovered++
+			if recovered > lost {
+				t.Errorf("OnRecovered called %d times after %d OnLost calls", recovered, lost)
+			}
+		},
+		Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	err = h.Run(ctx)
 	return
@@ -196,17 +201,19 @@ func TestHeartbeatRequiresRegistrationAfter404(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	recovered := false
+	registered := 0
 	h := &Heartbeat{
-		Client:   f,
-		Interval: 5 * time.Millisecond,
+		Client:       f,
+		Interval:     5 * time.Millisecond,
+		OnRegistered: func() { registered++ },
 		OnRecovered: func() {
 			recovered = true
 			cancel()
 		},
 		Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
-	if err := h.Run(ctx); err != nil || !recovered || f.registers != 4 || f.heartbeats != 1 {
-		t.Fatalf("run = %v, recovered = %t, registrations = %d, heartbeats = %d",
-			err, recovered, f.registers, f.heartbeats)
+	if err := h.Run(ctx); err != nil || !recovered || registered != 1 || f.registers != 4 || f.heartbeats != 1 {
+		t.Fatalf("run = %v, recovered = %t, registration callbacks = %d, registrations = %d, heartbeats = %d",
+			err, recovered, registered, f.registers, f.heartbeats)
 	}
 }

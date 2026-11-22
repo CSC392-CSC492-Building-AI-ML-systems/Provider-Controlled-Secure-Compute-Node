@@ -175,11 +175,11 @@ func (manager *Manager) availabilityRejection() RejectionReason {
 	manager.mu.RLock()
 	defer manager.mu.RUnlock()
 
-	if manager.disconnected {
-		return RejectionDisconnected
-	}
 	if manager.state == StateDraining {
 		return RejectionDraining
+	}
+	if manager.disconnected {
+		return RejectionDisconnected
 	}
 	if manager.activeLease != nil || manager.state == StateRunning {
 		return RejectionAlreadyActive
@@ -191,11 +191,11 @@ func (manager *Manager) reserveAcceptedOffer(offer Offer) (context.Context, Reje
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
 
-	if manager.disconnected {
-		return nil, RejectionDisconnected
-	}
 	if manager.state == StateDraining {
 		return nil, RejectionDraining
+	}
+	if manager.disconnected {
+		return nil, RejectionDisconnected
 	}
 	if manager.activeLease != nil || manager.state == StateRunning {
 		return nil, RejectionAlreadyActive
@@ -436,6 +436,14 @@ func (manager *Manager) SetCoordinatorConnected(connected bool) {
 	if !connected && manager.revoke != nil {
 		manager.revoke()
 	}
+}
+
+// CoordinatorConnected reports whether the coordinator is currently reachable.
+func (manager *Manager) CoordinatorConnected() bool {
+	manager.mu.RLock()
+	defer manager.mu.RUnlock()
+
+	return !manager.disconnected
 }
 
 // State returns the manager's current lifecycle state.

@@ -122,8 +122,8 @@ fields are rejected, so a typo fails loudly instead of falling back to a default
 On startup the agent runs capability discovery (`nvidia-smi`, Podman) and
 registers `gpu_model`, `vram_mb`, `driver_version`, and `runtimes` (R4). It
 refuses leases until registration succeeds, then heartbeats on its own
-goroutine. Handling a lost heartbeat, recovery, and removal is still being
-wired (see [way-forward](way-forward.md)).
+goroutine. Heartbeat loss reclaims the current job and blocks new leases
+until recovery. See [Failure cases](failure-cases.md#lost-heartbeat--coordinator-unreachable).
 
 The agent refuses to start when it cannot register honestly:
 
@@ -134,6 +134,24 @@ The agent refuses to start when it cannot register honestly:
 - **No rootless Podman.** Every job runs in it.
 - **A `4xx` registration reply** from the coordinator, e.g. a tier or runtime
   it does not accept.
+
+For explicit capability overrides, start the agent with coordinator flags:
+
+```sh
+node-agent -serve -allowlist examples/allowlist.json \
+  -coordinator http://127.0.0.1:8000 -provider-id "$(hostname)" \
+  -gpu-model "NVIDIA GeForce RTX 4080" -vram-mb 16376 -driver 580.178.04 \
+  -runtimes ollama -tiers standard
+```
+
+This mode uses `-api-key` or `NODE_API_KEY`. Use `-heartbeat` and
+`-lost-after` to set the interval and timeout. If startup registration is
+rejected, the socket stays open for local controls and the agent refuses
+leases. Use one startup mode per invocation.
+
+Start jobs through `gpu-ctl` or local offers. The
+[coordinator requirements](coordinator-requirements.md) describe the lease
+offer protocol for future polling.
 
 ## Related docs
 

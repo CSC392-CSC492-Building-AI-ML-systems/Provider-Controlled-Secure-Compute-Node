@@ -19,6 +19,7 @@ locally through `gpu-ctl` (see [provider controls](provider-controls.md#local-pr
   `node-agent -serve` (`internal/agent`, `internal/coordinator`).
 - Secure local control path for `Drain()` and `Reclaim()` through
   `node-agent -serve` and `gpu-ctl` over a private Unix socket.
+- P16 coordinator client and `coordinator.LeaseReporter` adapter, with tests.
 - Heartbeat loss reclaims active work and recovery reopens lease admission.
 - `gpu-ctl status` shows the latest coordinator status. Removal stops
   heartbeats and lease admission while the local control socket stays open.
@@ -26,8 +27,9 @@ locally through `gpu-ctl` (see [provider controls](provider-controls.md#local-pr
 ## Next tasks
 
 1. Agree the `runtimes` and `tier` vocabularies with Project 7b (R5, R8).
-2. Poll lease offers (L1) once registered and feed them to the lease manager.
-3. Replace the local reporter with coordinator lease calls (L3–L7).
+2. Poll lease offers (L1) once registered and feed them to the lease manager
+   once the coordinator's `job_requirements` format is agreed.
+3. Use `coordinator.LeaseReporter` for remote leases (L3–L7).
 4. Connect the dashboard to the real manager instead of its mock controller.
 5. Add end-to-end and failure tests for coordinator, heartbeat, and control
    behavior.
