@@ -49,12 +49,12 @@ Source tags:
 | --- | --- | --- |
 | R1 | Register once on startup, before heartbeating or polling. | impl |
 | R2 | `provider_id` non-empty and stable across restarts (from config, not random). | impl |
-| R3 | `gpu_model` non-empty, `vram_mb > 0`. A node with no GPU cannot register as-is; decide whether to refuse to start or report CPU-only (P16 has no CPU-only path). | impl / open |
+| R3 | `gpu_model` non-empty, `vram_mb > 0`. A node with no GPU cannot register as-is; decide whether to refuse to start or report CPU-only (P16 has no CPU-only path). **Decided:** refuse to start by default; with `cpu_only: true` in the node config, register `gpu_model: "cpu"`, `vram_mb` = system RAM, `driver_version: "none"`. | impl / ours |
 | R4 | Only the 4 capability fields above. Our richer capability report (UUID, PCI bus, compute cap, CDI devices, host info) must be mapped down, not sent raw (T4). | impl |
 | R5 | `accepted_tiers` comes from provider config. Jobs whose `tier` is not listed are never offered. | impl |
 | R6 | `201` → registered, response has `provider_id, status, registered_at, last_heartbeat_at`. Registration counts as the first heartbeat. | impl |
 | R7 | `409 DUPLICATE_ID` → already registered (e.g. node restarted). Treat as success and continue heartbeating; no re-register/update endpoint exists. Capabilities changes are not propagated. | impl / open |
-| R8 | `runtimes` vocabulary is free-form strings matched exactly against job `required_runtime`. Agree the vocabulary with P16 (e.g. `"ollama"`, `"llama.cpp"`, `"podman"`). | impl / open |
+| R8 | `runtimes` vocabulary is free-form strings matched exactly against job `required_runtime`. Agree the vocabulary with P16 (e.g. `"ollama"`, `"llama.cpp"`, `"podman"`). **Proposed, pending agreement:** `"podman"` is always sent (registration fails without rootless Podman); others such as `"ollama"` come from the node config `runtimes`. | impl / open |
 
 ## 3. Heartbeat
 
