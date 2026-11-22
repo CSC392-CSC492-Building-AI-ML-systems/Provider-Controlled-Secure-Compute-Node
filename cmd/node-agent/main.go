@@ -27,7 +27,12 @@ func main() {
 	allowlistPath := flag.String("allowlist", "", "provider-owned JSON allowlist file (required)")
 	showOutput := flag.Bool("show-output", false, "print bounded container logs to stderr after exit")
 	interactive := flag.Bool("interactive", false, "configure a local workload through the interactive menu")
+	serveMode := flag.Bool("serve", false, "keep the agent running for local gpu-ctl commands")
+	socketPath := flag.String("socket", control.DefaultSocketPath(), "local control socket (with -serve)")
 	flag.Parse()
+	if *serveMode && *interactive {
+		log.Fatal("-serve and -interactive cannot be used together")
+	}
 	var input io.Reader = os.Stdin
 	if *interactive {
 		cfg, err := promptConfig(bufio.NewReader(os.Stdin), Config{Allowlist: *allowlistPath, ShowOutput: *showOutput})
@@ -50,6 +55,12 @@ func main() {
 	var workloadOutput io.Writer
 	if *showOutput {
 		workloadOutput = os.Stderr
+	}
+	if *serveMode {
+		if err := serve(ctx, *allowlistPath, *socketPath, os.Stdout, workloadOutput, log.Default()); err != nil {
+			log.Fatal(err)
+		}
+		return
 	}
 	if err := run(ctx, *allowlistPath, input, os.Stdout, workloadOutput); err != nil {
 		log.Fatal(err)
