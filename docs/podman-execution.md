@@ -8,9 +8,11 @@ No shell command or runtime flags come from the coordinator.
 
 `lease.NewManager(checker, containerengine.New(checker), coordinator)` wires this
 path into a coordinator adapter. Call `ReceiveOffer(ctx, offer)`, then `Wait(ctx)`
-after successful launch to collect the result and release the node. The network
-coordinator client, registration, and heartbeat transport remain placeholders;
-this change supplies a local command for exercising the same lease boundary.
+after successful launch to collect the result and release the node.
+`coordinator.LeaseReporter` adapts the P16 client to that port, and
+`node-agent -serve -coordinator <url>` registers and heartbeats, but offers do
+not come from the coordinator yet; the local command exercises the same lease
+boundary.
 
 ## Host prerequisites
 

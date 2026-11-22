@@ -17,6 +17,7 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node/internal/agent"
 	"github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node/internal/allowlist"
 	"github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node/internal/containerengine"
 	"github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node/internal/control"
@@ -27,7 +28,16 @@ func main() {
 	allowlistPath := flag.String("allowlist", "", "provider-owned JSON allowlist file (required)")
 	showOutput := flag.Bool("show-output", false, "print bounded container logs to stderr after exit")
 	interactive := flag.Bool("interactive", false, "configure a local workload through the interactive menu")
+	serveMode := flag.Bool("serve", false, "keep the agent running for local gpu-ctl commands")
+	socketPath := flag.String("socket", control.DefaultSocketPath(), "local control socket (with -serve)")
+	coordinatorConfig := registerCoordinatorFlags(flag.CommandLine)
 	flag.Parse()
+	if *serveMode && *interactive {
+		log.Fatal("-serve and -interactive cannot be used together")
+	}
+	if coordinatorConfig.url != "" && !*serveMode {
+		log.Fatal("-coordinator requires -serve")
+	}
 	var input io.Reader = os.Stdin
 	if *interactive {
 		cfg, err := promptConfig(bufio.NewReader(os.Stdin), Config{Allowlist: *allowlistPath, ShowOutput: *showOutput})
@@ -51,6 +61,12 @@ func main() {
 	if *showOutput {
 		workloadOutput = os.Stderr
 	}
+	if *serveMode {
+		if err := serveWithHeartbeat(ctx, *allowlistPath, *socketPath, os.Stdout, workloadOutput, log.Default(), coordinatorConfig.heartbeat()); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	if err := run(ctx, *allowlistPath, input, os.Stdout, workloadOutput); err != nil {
 		log.Fatal(err)
 	}
@@ -60,6 +76,12 @@ func main() {
 // gpu-ctl on the control socket. Lease events are written to output as JSON
 // lines. Stopping the agent cancels and removes any running workload.
 func serve(ctx context.Context, path string, socketPath string, output io.Writer, workloadOutput io.Writer, logger *log.Logger) error {
+	return serveWithHeartbeat(ctx, path, socketPath, output, workloadOutput, logger, nil)
+}
+
+// serveWithHeartbeat is serve with an optional coordinator heartbeat. While
+// the coordinator is unreachable the manager rejects new work.
+func serveWithHeartbeat(ctx context.Context, path string, socketPath string, output io.Writer, workloadOutput io.Writer, logger *log.Logger, heartbeat *agent.Heartbeat) error {
 	checker, err := allowlist.Load(path)
 	if err != nil {
 		return err
@@ -72,6 +94,18 @@ func serve(ctx context.Context, path string, socketPath string, output io.Writer
 	engine := containerengine.New(checker)
 	engine.Output = workloadOutput
 	manager := lease.NewManager(checker, engine, recorder)
+	if heartbeat != nil {
+		heartbeatCtx, stopHeartbeat := context.WithCancel(ctx)
+		heartbeatDone := make(chan struct{})
+		go func() {
+			defer close(heartbeatDone)
+			runHeartbeat(heartbeatCtx, manager, heartbeat, logger)
+		}()
+		defer func() {
+			stopHeartbeat()
+			<-heartbeatDone
+		}()
+	}
 	logger.Printf("node agent listening on %s with %d approved image(s); control it with gpu-ctl", socketPath, len(checker.Entries()))
 	return control.NewServer(manager, recorder, checker.Entries(), logger).Serve(ctx, listener)
 }

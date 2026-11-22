@@ -41,19 +41,26 @@ state without a result event.
 default 15s), or the coordinator returns `404` (forgotten provider) /
 `409` after drain.
 
-**Expected behavior (target, once heartbeat is enabled):**
+**Behavior with `node-agent -serve -coordinator <url>`:**
 
-1. Heartbeat loop retries at the normal interval and logs each failure.
-2. After `LostAfter` without a successful beat, assume leases are revoked:
-   stop the running container and clean up (`OnLost`).
-3. On `404 NOT_FOUND`, re-register; do not keep running work for a lease the
-   coordinator no longer tracks.
-4. On `409` removed/drained, stop heartbeating and polling until the provider
-   deliberately re-registers.
+1. The agent registers, retrying while the coordinator is down. Until
+   registration succeeds, new offers are rejected as `disconnected`.
+2. The heartbeat loop runs on its own goroutine, retries at the normal
+   interval (`-heartbeat`, default 5s) and logs each failure.
+3. After `-lost-after` (default 15s) without a successful beat, the agent
+   assumes its leases are revoked and **stops taking new work**: offers are
+   rejected as `disconnected` (reported to P16 as `TEMP_UNAVAILABLE`).
+   A job that is already running is left alone.
+4. On `404 NOT_FOUND` the coordinator has forgotten us: new work stops the
+   same way, and the agent re-registers.
+5. When a heartbeat or re-registration succeeds again, new work resumes.
+6. On `409` removed/drained, heartbeats stop and new work stays refused until
+   the agent is restarted. `gpu-ctl status`, drain and reclaim keep working.
 
-Until the network client is connected, treat “no heartbeat” as an operational
-gap: local jobs still run, but the federation cannot detect staleness. Use
-provider reclaim as the emergency stop.
+**Not yet done:** stopping the running container on loss (H10 in the
+[coordinator requirements](coordinator-requirements.md)). Use provider reclaim
+as the emergency stop. Without `-coordinator` the agent has no heartbeat and
+local jobs run as before.
 
 ## Emergency reclaim
 
