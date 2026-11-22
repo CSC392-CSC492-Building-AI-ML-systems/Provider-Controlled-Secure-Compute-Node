@@ -20,6 +20,10 @@ type Heartbeat struct {
 	// LostAfter is how long without a successful heartbeat before we assume the
 	// coordinator has revoked our leases. Default 15s, P16's stale timeout.
 	LostAfter time.Duration
+	// OnRegistered runs on the heartbeat goroutine after each successful
+	// registration: once at startup, and again after re-registering. Offers
+	// must not be taken before the first call (R1).
+	OnRegistered func()
 	// OnLost runs on the heartbeat goroutine, once per outage, when our leases
 	// are probably revoked: no heartbeat for LostAfter, or the coordinator forgot us.
 	OnLost func()
@@ -82,6 +86,9 @@ func (h *Heartbeat) defaults() {
 	if h.LostAfter <= 0 {
 		h.LostAfter = 15 * time.Second
 	}
+	if h.OnRegistered == nil {
+		h.OnRegistered = func() {}
+	}
 	if h.OnLost == nil {
 		h.OnLost = func() {}
 	}
@@ -116,10 +123,12 @@ func (h *Heartbeat) register(ctx context.Context) error {
 	if errors.Is(err, coordinator.ErrAlreadyRegistered) {
 		// P16 has no update endpoint, so changed capabilities are not sent (R7).
 		h.Log.Info("already registered, continuing")
+		h.OnRegistered()
 		return nil
 	}
 	if err == nil {
 		h.Log.Info("registered")
+		h.OnRegistered()
 	}
 	return err
 }
