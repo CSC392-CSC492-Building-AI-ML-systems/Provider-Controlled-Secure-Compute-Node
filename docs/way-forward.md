@@ -23,6 +23,8 @@ locally through `gpu-ctl` (see [provider controls](provider-controls.md#local-pr
 - Heartbeat loss reclaims active work and recovery reopens lease admission.
 - `gpu-ctl status` shows the latest coordinator status. Removal stops
   heartbeats and lease admission while the local control socket stays open.
+- GitHub Actions CI for Go tests, focused race tests, `go vet`, and web lint/build
+  checks. See [continuous integration](ci.md).
 
 ## Next tasks
 
@@ -33,7 +35,6 @@ locally through `gpu-ctl` (see [provider controls](provider-controls.md#local-pr
 4. Connect the dashboard to the real manager instead of its mock controller.
 5. Add end-to-end and failure tests for coordinator, heartbeat, and control
    behavior.
-6. Add CI for `go test`, `go test -race`, and `go vet`.
 
 ## Linux validation
 
