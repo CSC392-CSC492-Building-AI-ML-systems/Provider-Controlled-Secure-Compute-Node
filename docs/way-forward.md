@@ -25,6 +25,9 @@ locally through `gpu-ctl` (see [provider controls](provider-controls.md#local-pr
   heartbeats and lease admission while the local control socket stays open.
 - GitHub Actions CI for Go tests, focused race tests, `go vet`, and web lint/build
   checks. See [continuous integration](ci.md).
+- Live dashboard attached to `node-agent -serve` via `-dashboard` (loopback),
+  with adapters from the lease manager, capability probes, and a verification
+  guide. See [live dashboard testing](dashboard-live-testing.md).
 
 ## Next tasks
 
@@ -32,8 +35,7 @@ locally through `gpu-ctl` (see [provider controls](provider-controls.md#local-pr
 2. Poll lease offers (L1) once registered and feed them to the lease manager
    once the coordinator's `job_requirements` format is agreed.
 3. Use `coordinator.LeaseReporter` for remote leases (L3–L7).
-4. Connect the dashboard to the real manager instead of its mock controller.
-5. Add end-to-end and failure tests for coordinator, heartbeat, and control
+4. Add end-to-end and failure tests for coordinator, heartbeat, and control
    behavior.
 
 ## Linux validation
