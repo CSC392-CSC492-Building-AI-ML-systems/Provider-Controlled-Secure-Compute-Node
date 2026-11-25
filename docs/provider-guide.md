@@ -51,12 +51,19 @@ dashboard):
 /tmp/node-agent -serve -allowlist /path/to/allowlist.json
 ```
 
-Do not combine `-serve` with `-interactive`. A loopback `-dashboard` flag is
-planned when the live dashboard is wired into the agent; until then use
-`dashboard-mock` for the UI (see below).
+With the live dashboard (loopback only):
+
+```sh
+/tmp/node-agent -serve -allowlist /path/to/allowlist.json \
+  -dashboard 127.0.0.1:8080 -web web/dist
+```
+
+Do not combine `-serve` with `-interactive`. `-dashboard` requires `-serve`
+and refuses non-loopback addresses.
 
 Details: [Podman execution](podman-execution.md),
-[Provider controls](provider-controls.md).
+[Provider controls](provider-controls.md),
+[Live dashboard testing](dashboard-live-testing.md).
 
 ## 4. Provider controls
 
@@ -79,11 +86,14 @@ current job finishes. Resume ends drain on an idle node.
 ## 5. Dashboard
 
 1. Build the UI: `cd web && npm ci && npm run build`.
-2. Run `go run ./cmd/dashboard-mock -addr 127.0.0.1:8080 -web web/dist` for
-   UI development against mock data (loopback only).
-3. Open `http://127.0.0.1:8080`. Live agent wiring (`node-agent -dashboard`)
-   is the next integration step after this guide.
+2. **Live agent (preferred for demos):** start `node-agent` with
+   `-dashboard 127.0.0.1:8080 -web web/dist` as above, then open
+   `http://127.0.0.1:8080`. Status, probes, drain, and reclaim hit the real
+   lease manager.
+3. **Mock only (UI iteration):**  
+   `go run ./cmd/dashboard-mock -addr 127.0.0.1:8080 -web web/dist`
 
+Verification steps: [Live dashboard testing](dashboard-live-testing.md).  
 API contract: [Dashboard API](dashboard-api.md).
 
 ## 6. Security review and failure drills

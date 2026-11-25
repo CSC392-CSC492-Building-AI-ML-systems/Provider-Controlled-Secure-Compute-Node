@@ -89,7 +89,7 @@ func TestServeStopsNewWorkWhileCoordinatorIsLost(t *testing.T) {
 	defer cancel()
 	served := make(chan error, 1)
 	go func() {
-		served <- serveWithHeartbeat(ctx, policy, socket, &events, nil, log.New(&logs, "", 0), heartbeat, false)
+		served <- serveWithHeartbeat(ctx, policy, socket, &events, nil, log.New(&logs, "", 0), heartbeat, false, dashboardOpts{})
 	}()
 
 	send := func(request control.Request) control.Response {
