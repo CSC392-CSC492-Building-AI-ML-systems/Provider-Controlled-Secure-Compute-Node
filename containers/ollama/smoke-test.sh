@@ -3,7 +3,7 @@
 # End-to-end test for the curated Ollama image on a rootless Podman host.
 #
 # It builds the image, provisions the approved model, then checks:
-#   serve mode: health check, /api/tags lists only the approved model,
+#   serve mode: HTTP readiness, /api/tags lists only the approved model,
 #               /api/generate returns text, and `podman stop` is clean;
 #   job mode:   a valid request succeeds, malformed and model-override
 #               requests are rejected with exit code 2.
@@ -90,12 +90,12 @@ podman --remote=false run --detach --name "$name" \
     --publish "127.0.0.1:${port}:11434" \
     "$image" serve >/dev/null
 
-# Run the health check directly; rootless hosts without systemd timers never
-# run it on their own.
-healthy=0
-for _ in $(seq 1 60); do
-    if podman --remote=false healthcheck run "$name" >/dev/null 2>&1; then
-        healthy=1
+# Poll Ollama directly. Podman's default OCI build omits Docker HEALTHCHECK metadata.
+ready=0
+deadline=$((SECONDS + 120))
+while (( SECONDS < deadline )); do
+    if curl --fail --silent --max-time 1 --output /dev/null "http://127.0.0.1:${port}/api/version"; then
+        ready=1
         break
     fi
     [[ $(podman --remote=false inspect --format '{{.State.Running}}' "$name") == true ]] || {
@@ -104,8 +104,8 @@ for _ in $(seq 1 60); do
     }
     sleep 2
 done
-[[ $healthy == 1 ]] || fail "health check did not pass within 120 seconds"
-echo "Health check passed."
+[[ $ready == 1 ]] || fail "Ollama did not become ready within 120 seconds"
+echo "Ollama HTTP API is ready."
 
 tags=$(curl --fail --silent --show-error "http://127.0.0.1:${port}/api/tags")
 [[ $(jq -r '[.models[].name] | join(",")' <<<"$tags") == "$model" ]] ||

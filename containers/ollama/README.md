@@ -78,10 +78,9 @@ The image has two modes, selected by the container command:
 - **`serve`** runs the Ollama HTTP API on port `11434` until it is stopped.
   It is meant for local development and manual testing.
 
-Both modes refuse to start Ollama unless the model volume holds exactly the
-pinned TinyLlama model. The image includes a health check that confirms Ollama
-is responding; model integrity is checked once at startup, not on every
-health check.
+Both modes verify the provisioned TinyLlama manifest and blob digests before
+starting Ollama. Job mode exposes only the verified model files to Ollama.
+The rootless Podman smoke test checks startup through the HTTP API.
 
 The image is designed to run the way the node agent runs workloads: as
 UID/GID `65534:65534`, with a read-only root filesystem, all capabilities
@@ -213,14 +212,6 @@ curl --fail --silent --show-error \
 
 The response should contain `tinyllama:1.1b` and no other model.
 
-You can also inspect the container health status:
-
-```sh
-podman inspect \
-  --format '{{.State.Health.Status}}' \
-  provider-node-ollama
-```
-
 ### Stop
 
 Press `Ctrl+C` in the terminal running the container, or run:
@@ -309,7 +300,7 @@ containers/ollama/smoke-test.sh
 It builds the image, provisions the model, and then checks both modes using
 the node agent's container restrictions:
 
-- `serve` mode passes its health check, `/api/tags` lists only
+- `serve` mode answers its HTTP readiness probe, `/api/tags` lists only
   `tinyllama:1.1b`, `/api/generate` returns text, and `podman stop` shuts
   Ollama down without a forced kill;
 - `job` mode completes a valid request with a nonempty response, and rejects a
