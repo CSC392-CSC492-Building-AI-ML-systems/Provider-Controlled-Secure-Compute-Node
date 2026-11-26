@@ -1236,3 +1236,28 @@ func TestReclaimCancelsLaunchAndReportsResult(t *testing.T) {
 		t.Fatalf("killed=%t state=%s results=%+v", workload.killed, manager.State(), coordinator.results)
 	}
 }
+
+func TestLaunchReportsExpiredLease(t *testing.T) {
+	engine := &stubContainerEngine{err: context.DeadlineExceeded}
+	coordinator := &stubCoordinator{}
+	manager := NewManager(&stubAllowlist{allowed: true}, engine, coordinator)
+	now := time.Now()
+	expiry := now.Add(time.Minute)
+	manager.now = func() time.Time {
+		if len(engine.launchedDigests) > 0 {
+			return expiry
+		}
+		return now
+	}
+	offer := Offer{ID: "setup", ImageDigest: "sha256:approved", ExpiresAt: expiry}
+	if err := manager.ReceiveOffer(context.Background(), offer); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("launch error = %v, want deadline exceeded", err)
+	}
+	if len(coordinator.results) != 1 || coordinator.results[0].Outcome != OutcomeExpired ||
+		coordinator.results[0].ExitCode != nil {
+		t.Fatalf("results=%+v, want setup expiry without an exit code", coordinator.results)
+	}
+	if manager.State() != StateIdle {
+		t.Fatalf("state=%s, want idle", manager.State())
+	}
+}

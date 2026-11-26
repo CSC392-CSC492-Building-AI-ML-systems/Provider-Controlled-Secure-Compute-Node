@@ -133,9 +133,13 @@ func (manager *Manager) ReceiveOffer(ctx context.Context, offer Offer) error {
 			manager.clearActiveLease()
 		}
 
+		outcome := OutcomeFailed
+		if !manager.now().Before(offer.ExpiresAt) {
+			outcome = OutcomeExpired
+		}
 		if reportErr := manager.coordinator.ReportResult(ctx, Result{
 			LeaseID: offer.ID,
-			Outcome: OutcomeFailed,
+			Outcome: outcome,
 		}); reportErr != nil {
 			return errors.Join(
 				launchErr,
