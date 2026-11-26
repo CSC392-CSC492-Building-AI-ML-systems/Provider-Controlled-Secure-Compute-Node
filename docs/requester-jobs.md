@@ -74,7 +74,7 @@ Run Podman and the node agent as the same rootless user.
 ```sh
 ollama_ref='registry.example/team/provider-node-ollama@sha256:<published digest>'
 ollama_digest=${ollama_ref##*@}
-podman pull --tls-verify=true "$ollama_ref"
+podman --remote=false pull --tls-verify=true "$ollama_ref"
 OLLAMA_IMAGE="$ollama_ref" OLLAMA_VOLUME=ollama-models containers/ollama/provision-model.sh
 ```
 

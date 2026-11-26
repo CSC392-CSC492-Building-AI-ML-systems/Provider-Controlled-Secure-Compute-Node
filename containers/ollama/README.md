@@ -335,22 +335,28 @@ also requires `curl`. The registry and its certificate are removed on exit.
   set -euo pipefail
   work=$(mktemp -d)
   registry=
-  trap 'if [[ -n $registry ]]; then podman rm --force --volumes "$registry" >/dev/null; fi; rm -rf -- "$work"' EXIT
+  cleanup() {
+    if [[ -n $registry ]]; then
+      podman --remote=false rm --force --ignore --volumes "$registry" >/dev/null
+    fi
+    rm -rf -- "$work"
+  }
+  trap cleanup EXIT
   openssl req -x509 -nodes -newkey rsa:2048 -days 1 -subj /CN=127.0.0.1 \
     -addext subjectAltName=IP:127.0.0.1 -keyout "$work/key.pem" -out "$work/cert.pem"
-  registry=$(podman run --detach --rm --publish 127.0.0.1::5000 \
+  registry=$(podman --remote=false run --detach --rm --publish 127.0.0.1::5000 \
     --volume "$work:/certs:ro,Z" \
     --env REGISTRY_HTTP_TLS_CERTIFICATE=/certs/cert.pem \
     --env REGISTRY_HTTP_TLS_KEY=/certs/key.pem docker.io/library/registry:2)
-  address=$(podman port "$registry" 5000/tcp)
+  address=$(podman --remote=false port "$registry" 5000/tcp)
   curl --fail --silent --show-error --retry 5 --retry-connrefused \
     --cacert "$work/cert.pem" "https://$address/v2/" >/dev/null
 
   image=localhost/provider-node-ollama:provider-smoke
-  podman build --tag "$image" --file containers/ollama/Containerfile containers/ollama
+  podman --remote=false build --tag "$image" --file containers/ollama/Containerfile containers/ollama
   repository="$address/test/provider-node-ollama"
   export SSL_CERT_FILE="$work/cert.pem"
-  podman push --tls-verify=true --digestfile "$work/digest" "$image" "docker://$repository:smoke"
+  podman --remote=false push --tls-verify=true --digestfile "$work/digest" "$image" "docker://$repository:smoke"
   containers/ollama/provider-smoke-test.sh "$repository@$(cat "$work/digest")"
 )
 ```
