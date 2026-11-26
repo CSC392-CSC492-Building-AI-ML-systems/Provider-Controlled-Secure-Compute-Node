@@ -19,7 +19,7 @@ if ! command -v podman >/dev/null 2>&1; then
     exit 1
 fi
 
-podman volume create "$volume" >/dev/null
+podman volume create --ignore "$volume" >/dev/null
 
 exec podman run --rm \
     --cap-drop=ALL \

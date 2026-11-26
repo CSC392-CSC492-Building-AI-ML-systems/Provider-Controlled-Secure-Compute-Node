@@ -121,9 +121,10 @@ image, then copies the static binary into the Ollama image.
 ## Provision the approved model
 
 The provisioning command accepts no model name. It always installs the model
-pinned in the image and checks every pinned digest afterward. The
-provisioning container runs with all Linux capabilities dropped and
-`no-new-privileges`.
+pinned in the image and writes the pinned manifest after the download. The
+provisioning container checks every pinned digest and runs with all Linux
+capabilities dropped and `no-new-privileges`. Job mode builds its temporary
+model store from that manifest and those verified blobs.
 
 ```sh
 containers/ollama/provision-model.sh

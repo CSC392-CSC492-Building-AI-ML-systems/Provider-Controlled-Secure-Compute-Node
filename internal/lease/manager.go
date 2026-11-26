@@ -34,6 +34,7 @@ type Manager struct {
 	state       State
 	activeLease *Active
 	workload    Workload
+	launchDone  chan struct{}
 	waiting     bool
 	// waitDone is closed when the in-progress Wait returns.
 	waitDone chan struct{}
@@ -80,10 +81,11 @@ func (manager *Manager) ReceiveOffer(ctx context.Context, offer Offer) error {
 		return manager.rejectOffer(ctx, offer.ID, rejectionReason)
 	}
 
-	revocation, rejectionReason := manager.reserveAcceptedOffer(offer)
+	revocation, launchDone, rejectionReason := manager.reserveAcceptedOffer(offer)
 	if rejectionReason != "" {
 		return manager.rejectOffer(ctx, offer.ID, rejectionReason)
 	}
+	defer close(launchDone)
 
 	if err := manager.coordinator.ReportAccepted(ctx, offer.ID); err != nil {
 		manager.clearActiveLease()
@@ -103,22 +105,31 @@ func (manager *Manager) ReceiveOffer(ctx context.Context, offer Offer) error {
 	} else {
 		workload, err = manager.engine.Launch(launchCtx, offer.ImageDigest)
 	}
-	if revocation.Err() != nil {
+	// Publish the workload under the lock so reclaim either cancels setup
+	// or owns the returned workload, including when they finish together.
+	manager.mu.Lock()
+	revoked := revocation.Err() != nil
+	if !revoked {
+		manager.workload = workload
+	}
+	manager.mu.Unlock()
+	if revoked {
 		// Launch can return a handle even on error when cleanup failed.
 		if workload != nil {
 			if killErr := killWorkload(workload); killErr != nil {
-				manager.setWorkload(workload)
+				manager.mu.Lock()
+				manager.workload = workload
+				manager.reclaimed = false
+				manager.mu.Unlock()
 				return errors.Join(err, fmt.Errorf("clean up revoked workload: %w", killErr))
 			}
 		}
-		return errors.Join(errors.New("coordinator revoked the lease during launch"), err,
+		return errors.Join(errors.New("lease revoked during launch"), err,
 			manager.reportReclaimed(offer.ID))
 	}
 	if err != nil {
 		launchErr := fmt.Errorf("launch lease workload: %w", err)
-		if workload != nil {
-			manager.setWorkload(workload)
-		} else {
+		if workload == nil {
 			manager.clearActiveLease()
 		}
 
@@ -133,8 +144,6 @@ func (manager *Manager) ReceiveOffer(ctx context.Context, offer Offer) error {
 		}
 		return launchErr
 	}
-	manager.setWorkload(workload)
-
 	return nil
 }
 
@@ -190,18 +199,18 @@ func (manager *Manager) availabilityRejection() RejectionReason {
 	return ""
 }
 
-func (manager *Manager) reserveAcceptedOffer(offer Offer) (context.Context, RejectionReason) {
+func (manager *Manager) reserveAcceptedOffer(offer Offer) (context.Context, chan struct{}, RejectionReason) {
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
 
 	if manager.state == StateDraining {
-		return nil, RejectionDraining
+		return nil, nil, RejectionDraining
 	}
 	if manager.disconnected {
-		return nil, RejectionDisconnected
+		return nil, nil, RejectionDisconnected
 	}
 	if manager.activeLease != nil || manager.state == StateRunning {
-		return nil, RejectionAlreadyActive
+		return nil, nil, RejectionAlreadyActive
 	}
 
 	manager.activeLease = &Active{
@@ -212,14 +221,8 @@ func (manager *Manager) reserveAcceptedOffer(offer Offer) (context.Context, Reje
 	}
 	manager.state = StateRunning
 	manager.revocation, manager.revoke = context.WithCancel(context.Background())
-	return manager.revocation, ""
-}
-
-func (manager *Manager) setWorkload(workload Workload) {
-	manager.mu.Lock()
-	defer manager.mu.Unlock()
-
-	manager.workload = workload
+	manager.launchDone = make(chan struct{})
+	return manager.revocation, manager.launchDone, ""
 }
 
 func (manager *Manager) clearActiveLease() {
@@ -230,6 +233,7 @@ func (manager *Manager) clearActiveLease() {
 	manager.revocation, manager.revoke = nil, nil
 	manager.activeLease = nil
 	manager.workload = nil
+	manager.launchDone = nil
 	manager.waiting = false
 	manager.waitDone = nil
 	manager.finishing = false
@@ -376,11 +380,11 @@ func (manager *Manager) Resume(_ context.Context) error {
 // reclaimed result, and returns once the node is released.
 func (manager *Manager) Reclaim(ctx context.Context) error {
 	manager.mu.Lock()
-	if manager.workload == nil || manager.activeLease == nil {
+	if manager.activeLease == nil {
 		manager.mu.Unlock()
 		return errors.New("no active workload available to reclaim")
 	}
-	workload, active := manager.workload, *manager.activeLease
+	workload, active := manager.workload, manager.activeLease
 	if manager.reclaimed {
 		manager.mu.Unlock()
 		return errors.New("workload is already being reclaimed")
@@ -390,6 +394,12 @@ func (manager *Manager) Reclaim(ctx context.Context) error {
 		return errors.New("workload is already finishing")
 	}
 	manager.reclaimed = true
+	if workload == nil {
+		manager.revoke()
+		done := manager.launchDone
+		manager.mu.Unlock()
+		return manager.reclaimLaunch(ctx, active, done)
+	}
 	if manager.waiting {
 		done, killDone := manager.waitDone, make(chan struct{})
 		manager.killDone = killDone
@@ -415,6 +425,22 @@ func (manager *Manager) Reclaim(ctx context.Context) error {
 	}
 
 	return manager.reportReclaimed(active.ID)
+}
+
+// reclaimLaunch waits for the cancel-aware launch path to clean up. Keep the
+// lease reserved if the engine returned a handle that could not be removed.
+func (manager *Manager) reclaimLaunch(ctx context.Context, active *Active, done <-chan struct{}) error {
+	select {
+	case <-done:
+		manager.mu.RLock()
+		defer manager.mu.RUnlock()
+		if manager.activeLease == active {
+			return errors.New("reclaim during launch: workload cleanup incomplete")
+		}
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("reclaim during launch: %w", ctx.Err())
+	}
 }
 
 // reclaimWaited kills a workload that Wait is collecting, then waits for that

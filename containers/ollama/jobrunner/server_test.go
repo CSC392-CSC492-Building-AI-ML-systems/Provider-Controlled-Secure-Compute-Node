@@ -15,7 +15,7 @@ func TestStopReturnsAfterWaitReadyObservesExit(t *testing.T) {
 	if err != nil {
 		t.Skip("false is not available")
 	}
-	process, err := startServer(falseBinary, "127.0.0.1:1")
+	process, err := startServer(falseBinary, "127.0.0.1:1", t.TempDir())
 	if err != nil {
 		t.Fatalf("startServer: %v", err)
 	}

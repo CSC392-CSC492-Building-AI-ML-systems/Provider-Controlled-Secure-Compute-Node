@@ -9,8 +9,10 @@ and the node agent's container engine.
 One container runs **one job** and then exits:
 
 1. The container starts with the job's request mounted read-only.
-2. It verifies the approved model, starts Ollama on the container's loopback
-   interface, and generates one response.
+2. It verifies the read-only model volume and starts Ollama on the container's
+   loopback interface using a temporary store. The store contains the approved
+   manifest and links to the verified blobs, so Ollama can use its own indexes
+   without modifying the provisioned model.
 3. It writes the result to the output directory and exits.
 
 This matches how the node agent supervises a lease: it waits for the container
@@ -143,16 +145,13 @@ response is written.
 - The node agent must delete the job's input and output directories after it
   has collected the result.
 
-## Requirements for the node agent
+## Node agent integration
 
-These are not implemented in the container engine yet. They are listed here
-so the engine can be integrated with this image later:
+For an inference lease, the node agent mounts the provisioned model volume
+read-only, mounts the input and output directories, collects the structured
+result, removes the workspace, and applies a 2 GiB memory limit. The node
+enables NVIDIA CDI and sets `OLLAMA_JOB_REQUIRE_GPU=1` when its provider
+policy requires GPU inference.
 
-- Mount the model volume read-only at `/models`.
-- Create a per-job directory, write `request.json`, mount it as described
-  above, and delete it after the job.
-- Allow at least 2 GB of memory; TinyLlama does not fit in 512 MB.
-- Pass the GPU device when GPU inference is wanted (see the README).
-- Carry the validated inference request in the lease, or fetch it from the
-  coordinator. The node-side lease model now has a request field; coordinator
-  transport and Podman mount integration still need to populate and consume it.
+See [Submit a job to a provider node](../../docs/requester-jobs.md) for the
+requester API and test client.

@@ -27,9 +27,9 @@ type serverProcess struct {
 
 // startServer runs `ollama serve` bound to host. Ollama's own logs go to
 // stderr; with debug logging off they do not include prompt contents.
-func startServer(binary, host string) (server, error) {
+func startServer(binary, host, modelStore string) (server, error) {
 	cmd := exec.Command(binary, "serve")
-	cmd.Env = serverEnv(os.Environ(), host)
+	cmd.Env = serverEnv(os.Environ(), host, modelStore)
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
@@ -66,7 +66,7 @@ func (process *serverProcess) stop() {
 
 // serverEnv pins the listen address and removes settings that would log
 // prompts or let the environment change where models are loaded from.
-func serverEnv(environ []string, host string) []string {
+func serverEnv(environ []string, host, modelStore string) []string {
 	blocked := map[string]bool{
 		"OLLAMA_HOST":    true,
 		"OLLAMA_DEBUG":   true,
@@ -82,7 +82,7 @@ func serverEnv(environ []string, host string) []string {
 	}
 	return append(env,
 		"OLLAMA_HOST="+host,
-		"OLLAMA_MODELS=/models",
+		"OLLAMA_MODELS="+modelStore,
 		"OLLAMA_NOPRUNE=1",
 	)
 }

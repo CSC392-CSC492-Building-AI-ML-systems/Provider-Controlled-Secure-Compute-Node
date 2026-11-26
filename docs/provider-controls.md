@@ -108,6 +108,9 @@ Reclaim is an emergency provider action:
 running job → reclaim requested → container removed → result=reclaimed
 ```
 
+An accepted job can also be reclaimed during image pull or startup. The
+requester receives the terminal `reclaimed` outcome after cleanup.
+
 The manager:
 
 - takes ownership of the active workload operation so a concurrent wait cannot

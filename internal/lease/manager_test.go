@@ -1209,3 +1209,30 @@ func TestWaitForOfferObservesEarlyReclaimAndSkipsNewLease(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestReclaimCancelsLaunchAndReportsResult(t *testing.T) {
+	workload := &controlledWorkload{}
+	engine := interruptedLaunch{started: make(chan struct{}), workload: workload}
+	coordinator := &stubCoordinator{}
+	manager := NewManager(&stubAllowlist{allowed: true}, engine, coordinator)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	offer := Offer{ID: "setup", ImageDigest: "sha256:approved", ExpiresAt: time.Now().Add(time.Minute)}
+	launched := make(chan error, 1)
+	go func() { launched <- manager.ReceiveOffer(ctx, offer) }()
+	select {
+	case <-engine.started:
+	case <-ctx.Done():
+		t.Fatal("launch did not start")
+	}
+	if err := manager.Reclaim(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-launched; !errors.Is(err, context.Canceled) {
+		t.Fatalf("launch error = %v, want cancellation", err)
+	}
+	if !workload.killed || manager.State() != StateIdle || len(coordinator.results) != 1 ||
+		coordinator.results[0].Outcome != OutcomeReclaimed {
+		t.Fatalf("killed=%t state=%s results=%+v", workload.killed, manager.State(), coordinator.results)
+	}
+}

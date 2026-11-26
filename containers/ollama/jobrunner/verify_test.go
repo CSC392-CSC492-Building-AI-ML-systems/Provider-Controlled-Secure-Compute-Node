@@ -393,3 +393,43 @@ func TestApprovedModelFromEnvRejectsBadEntries(t *testing.T) {
 		t.Error("manifest path outside manifests/ was accepted")
 	}
 }
+
+func TestStageModelStoreUsesOnlyVerifiedManifestAndBlobs(t *testing.T) {
+	fixture := newModelFixture(t)
+	unapprovedIndex := filepath.Join(fixture.root, "manifests-v2", "ollama.com", "library", "tinyllama", "1.1b")
+	if err := os.MkdirAll(filepath.Dir(unapprovedIndex), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(unapprovedIndex, []byte("unapproved index"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	unknownBlob := manifestEntry{Digest: digestOf([]byte("extra blob"))}
+	fixture.writeBlob(t, unknownBlob.Digest, []byte("extra blob"))
+	if err := verifyModel(fixture.root, fixture.model); err != nil {
+		t.Fatal(err)
+	}
+
+	store := t.TempDir()
+	if err := stageModelStore(store, fixture.root, fixture.model); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(store, testManifestPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := checkManifest(data, fixture.model); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(store, "manifests-v2")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("provider index is visible in the job store: %v", err)
+	}
+	if _, err := os.Stat(blobPath(store, unknownBlob)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("unapproved blob is visible in the job store: %v", err)
+	}
+	for _, entry := range append([]manifestEntry{fixture.model.Config}, fixture.model.Layers...) {
+		data, err := os.ReadFile(blobPath(store, entry))
+		if err != nil || digestOf(data) != entry.Digest {
+			t.Fatalf("cannot read approved blob %s from temporary store: %v", entry.Digest, err)
+		}
+	}
+}

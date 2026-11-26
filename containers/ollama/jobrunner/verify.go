@@ -272,7 +272,7 @@ func walkManifestValue(decoder *json.Decoder, path string) error {
 // checkBlob requires the blob for entry to be a regular file with the pinned
 // size and SHA-256 digest.
 func checkBlob(root string, entry manifestEntry) error {
-	path := filepath.Join(root, "blobs", "sha256-"+strings.TrimPrefix(entry.Digest, "sha256:"))
+	path := blobPath(root, entry)
 	info, err := os.Lstat(path)
 	if err != nil {
 		return fmt.Errorf("%s is missing", path)
@@ -294,6 +294,55 @@ func checkBlob(root string, entry manifestEntry) error {
 	}
 	if actual := "sha256:" + hex.EncodeToString(hash.Sum(nil)); actual != entry.Digest {
 		return fmt.Errorf("%s has digest %s, want %s", path, actual, entry.Digest)
+	}
+	return nil
+}
+
+func blobPath(root string, entry manifestEntry) string {
+	return filepath.Join(root, "blobs", "sha256-"+strings.TrimPrefix(entry.Digest, "sha256:"))
+}
+
+// writeManifest writes the provider-pinned format. Ollama 0.40 also adds an
+// index layer to its legacy manifest on pull, which the approved file omits.
+func (model approvedModel) writeManifest(root string) error {
+	data, err := json.Marshal(struct {
+		SchemaVersion int             `json:"schemaVersion"`
+		MediaType     string          `json:"mediaType"`
+		Config        manifestEntry   `json:"config"`
+		Layers        []manifestEntry `json:"layers"`
+	}{
+		SchemaVersion: 2,
+		MediaType:     "application/vnd.docker.distribution.manifest.v2+json",
+		Config:        model.Config,
+		Layers:        model.Layers,
+	})
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(root, filepath.FromSlash(model.ManifestPath))
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0644)
+}
+
+// stageModelStore gives Ollama a writable index under the job's temporary
+// directory and exposes only the verified blobs from the read-only volume.
+func stageModelStore(store, root string, model approvedModel) error {
+	root, err := filepath.Abs(root)
+	if err != nil {
+		return err
+	}
+	if err := model.writeManifest(store); err != nil {
+		return err
+	}
+	if err := os.Mkdir(filepath.Join(store, "blobs"), 0755); err != nil {
+		return err
+	}
+	for _, entry := range append([]manifestEntry{model.Config}, model.Layers...) {
+		if err := os.Symlink(blobPath(root, entry), blobPath(store, entry)); err != nil {
+			return err
+		}
 	}
 	return nil
 }

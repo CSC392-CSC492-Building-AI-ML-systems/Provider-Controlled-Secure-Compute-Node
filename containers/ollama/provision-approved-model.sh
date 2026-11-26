@@ -101,6 +101,13 @@ if ! /bin/ollama pull "$APPROVED_MODEL"; then
     exit 1
 fi
 
+# Ollama's legacy manifest now records a separate index layer. Write the
+# curated manifest and verify its exact entries and downloaded blobs.
+if ! /usr/local/bin/ollama-job write-approved-manifest; then
+    remove_downloaded_files
+    exit 20
+fi
+
 set +e
 /usr/local/bin/verify-approved-model
 status=$?

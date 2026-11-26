@@ -66,9 +66,9 @@ arguments, mounts, devices, registries, or container logs.
 
 ## Submit an Ollama prompt
 
-On the provider, [publish the curated image and provision the approved
-model](../containers/ollama/README.md). Add the image's pinned digest to
-the allowlist and add `-job-ollama-digest "$ollama_digest"` to the node
+On the provider, [build and publish the curated image from this revision and
+provision the approved model](../containers/ollama/README.md). Add the new
+image's pinned digest to the allowlist and add `-job-ollama-digest "$ollama_digest"` to the node
 command. The configured image and its bundled model receive all prompt jobs.
 Add `-job-require-gpu` on a provider configured for NVIDIA CDI to require
 GPU inference. Without that flag, the node does not attach the GPU.

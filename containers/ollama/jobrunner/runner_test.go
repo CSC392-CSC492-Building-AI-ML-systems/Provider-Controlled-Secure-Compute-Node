@@ -316,9 +316,9 @@ func TestServerEnvPinsSettings(t *testing.T) {
 		"OLLAMA_DEBUG=1",
 		"OLLAMA_HOST=0.0.0.0:11434",
 		"OLLAMA_MODELS=/elsewhere",
-	}, "127.0.0.1:11434")
+	}, "127.0.0.1:11434", "/tmp/verified-model-store")
 	joined := strings.Join(env, "\n")
-	for _, want := range []string{"PATH=/bin", "OLLAMA_HOST=127.0.0.1:11434", "OLLAMA_MODELS=/models", "OLLAMA_NOPRUNE=1"} {
+	for _, want := range []string{"PATH=/bin", "OLLAMA_HOST=127.0.0.1:11434", "OLLAMA_MODELS=/tmp/verified-model-store", "OLLAMA_NOPRUNE=1"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("env missing %s: %v", want, env)
 		}

@@ -37,7 +37,7 @@ func (manager *fakeManager) ReceiveOffer(_ context.Context, offer lease.Offer) e
 	return nil
 }
 
-func (manager *fakeManager) Wait(context.Context) error { return nil }
+func (manager *fakeManager) WaitForOffer(context.Context, string) error { return nil }
 
 func (manager *fakeManager) Drain(context.Context) error {
 	manager.mu.Lock()
