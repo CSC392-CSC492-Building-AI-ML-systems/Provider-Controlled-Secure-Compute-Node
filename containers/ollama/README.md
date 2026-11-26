@@ -14,10 +14,10 @@ software that runs on a provider node.
 | Area | State |
 | --- | --- |
 | Job runner (`jobrunner/`) | Unit-tested with `go test` against a fake Ollama server |
-| Image build, provisioning, job and serve modes | Written, **not yet run**: no Linux host with Podman has been available |
-| GPU inference | Written, **not yet run**: needs the NVIDIA provider node with the Container Toolkit |
-| Publishing | Script written, **not yet run**: no registry chosen yet |
-| Node-agent integration | **Not started**: the container engine does not yet mount the model and job directories or allow enough memory (see [JOB_CONTRACT.md](JOB_CONTRACT.md#requirements-for-the-node-agent)) |
+| Image build, provisioning, job and serve modes | Verified on Linux with rootless Podman and CPU inference |
+| GPU inference | Pending verification on an NVIDIA provider with the Container Toolkit |
+| Image distribution | Digest-pinned push and pull verified with a local TLS registry |
+| Node-agent integration | Verified with a requester prompt and structured CPU result through the running node agent (see [the requester guide](../../docs/requester-jobs.md)) |
 
 The first step on a Linux host with rootless Podman is to run
 [`smoke-test.sh`](#smoke-test) and fix anything it reports. Podman on macOS
