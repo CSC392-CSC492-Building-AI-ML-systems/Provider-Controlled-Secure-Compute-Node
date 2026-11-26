@@ -14,10 +14,10 @@ software that runs on a provider node.
 | Area | State |
 | --- | --- |
 | Job runner (`jobrunner/`) | Unit-tested with `go test` against a fake Ollama server |
-| Image build, provisioning, job and serve modes | Written, **not yet run**: no Linux host with Podman has been available |
-| GPU inference | Written, **not yet run**: needs the NVIDIA provider node with the Container Toolkit |
-| Publishing | Script written, **not yet run**: no registry chosen yet |
-| Node-agent integration | **Not started**: the container engine does not yet mount the model and job directories or allow enough memory (see [JOB_CONTRACT.md](JOB_CONTRACT.md#requirements-for-the-node-agent)) |
+| Image build, provisioning, job and serve modes | Verified on Linux with rootless Podman and CPU inference |
+| GPU inference | Pending verification on an NVIDIA provider with the Container Toolkit |
+| Image distribution | Digest-pinned push and pull verified with a local TLS registry |
+| Node-agent integration | Verified with a requester prompt and structured CPU result through the running node agent (see [the requester guide](../../docs/requester-jobs.md)) |
 
 The first step on a Linux host with rootless Podman is to run
 [`smoke-test.sh`](#smoke-test) and fix anything it reports. Podman on macOS
@@ -78,10 +78,9 @@ The image has two modes, selected by the container command:
 - **`serve`** runs the Ollama HTTP API on port `11434` until it is stopped.
   It is meant for local development and manual testing.
 
-Both modes refuse to start Ollama unless the model volume holds exactly the
-pinned TinyLlama model. The image includes a health check that confirms Ollama
-is responding; model integrity is checked once at startup, not on every
-health check.
+Both modes verify the provisioned TinyLlama manifest and blob digests before
+starting Ollama. Job mode exposes only the verified model files to Ollama.
+The rootless Podman smoke test checks startup through the HTTP API.
 
 The image is designed to run the way the node agent runs workloads: as
 UID/GID `65534:65534`, with a read-only root filesystem, all capabilities
@@ -121,18 +120,20 @@ image, then copies the static binary into the Ollama image.
 ## Provision the approved model
 
 The provisioning command accepts no model name. It always installs the model
-pinned in the image and checks every pinned digest afterward. The
-provisioning container runs with all Linux capabilities dropped and
-`no-new-privileges`.
+pinned in the image and writes the pinned manifest after the download. The
+provisioning container checks every pinned digest and runs with all Linux
+capabilities dropped and `no-new-privileges`. Job mode builds its temporary
+model store from that manifest and those verified blobs.
 
 ```sh
 containers/ollama/provision-model.sh
 ```
 
 This creates the `ollama-models` volume if needed and downloads about 638 MB.
-If the pinned model is already present, the command leaves it unchanged
-except for making it readable by the inference user. If a different or
-modified model is already present, it stops without downloading anything. If
+If the pinned model is already present, the command reuses its files,
+prepares the index directory and makes the files readable by the inference
+user. If a different or modified model is present, it stops without
+downloading anything. If
 a new download fails partway or fails verification, its files are removed so
 the next provisioning run can try again.
 
@@ -211,14 +212,6 @@ curl --fail --silent --show-error \
 ```
 
 The response should contain `tinyllama:1.1b` and no other model.
-
-You can also inspect the container health status:
-
-```sh
-podman inspect \
-  --format '{{.State.Health.Status}}' \
-  provider-node-ollama
-```
 
 ### Stop
 
@@ -308,7 +301,7 @@ containers/ollama/smoke-test.sh
 It builds the image, provisions the model, and then checks both modes using
 the node agent's container restrictions:
 
-- `serve` mode passes its health check, `/api/tags` lists only
+- `serve` mode answers its HTTP readiness probe, `/api/tags` lists only
   `tinyllama:1.1b`, `/api/generate` returns text, and `podman stop` shuts
   Ollama down without a forced kill;
 - `job` mode completes a valid request with a nonempty response, and rejects a

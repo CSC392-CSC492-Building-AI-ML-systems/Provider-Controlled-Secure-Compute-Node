@@ -1,5 +1,8 @@
 # Provider configuration guide
 
+To let a trusted requester submit an allowlisted image or an Ollama prompt,
+see [Submit a job to a provider node](requester-jobs.md).
+
 End-to-end setup for operating a provider-controlled secure compute node on a
 single Linux machine. This umbrella links the detailed docs; follow them in
 order for a first bring-up.

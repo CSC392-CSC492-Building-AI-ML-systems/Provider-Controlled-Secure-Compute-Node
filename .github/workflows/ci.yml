@@ -25,7 +25,11 @@ jobs:
         run: go test ./...
 
       - name: Run race tests
-        run: go test -race ./internal/containerengine ./internal/lease ./cmd/node-agent
+        run: go test -race ./internal/containerengine ./internal/lease ./internal/jobpush ./cmd/node-agent
+
+      - name: Run Ollama jobrunner tests
+        working-directory: containers/ollama/jobrunner
+        run: go test ./...
 
       - name: Run go vet
         run: go vet ./...

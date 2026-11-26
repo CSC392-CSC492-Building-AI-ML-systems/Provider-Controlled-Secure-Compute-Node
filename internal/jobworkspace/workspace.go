@@ -3,7 +3,6 @@
 package jobworkspace
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -86,16 +85,9 @@ func (workspace *Workspace) WriteRequest(request lease.InferenceRequest) error {
 	if workspace == nil || workspace.root == "" {
 		return errors.New("workspace is not initialized")
 	}
-	if err := request.Validate(); err != nil {
-		return fmt.Errorf("validate inference request: %w", err)
-	}
-	contents, err := json.Marshal(request)
+	contents, err := request.MarshalInput()
 	if err != nil {
-		return fmt.Errorf("encode inference request: %w", err)
-	}
-	contents = append(contents, '\n')
-	if len(contents) > lease.MaxRequestBytes {
-		return fmt.Errorf("inference request is larger than %d bytes", lease.MaxRequestBytes)
+		return fmt.Errorf("prepare inference request: %w", err)
 	}
 	if err := os.WriteFile(workspace.RequestPath(), contents, requestFileMode); err != nil {
 		return fmt.Errorf("write inference request: %w", err)

@@ -50,7 +50,7 @@ func (manager *fakeManager) ReceiveOffer(_ context.Context, offer lease.Offer) e
 	return nil
 }
 
-func (manager *fakeManager) Wait(context.Context) error {
+func (manager *fakeManager) WaitForOffer(context.Context, string) error {
 	manager.waits <- struct{}{}
 	return nil
 }

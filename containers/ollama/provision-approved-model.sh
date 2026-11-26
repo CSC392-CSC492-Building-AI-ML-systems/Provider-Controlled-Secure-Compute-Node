@@ -24,8 +24,9 @@ set -e
 
 case "$status" in
     0)
-        # Volumes provisioned by older images may not be readable by the
-        # unprivileged inference user yet.
+        # Ollama 0.40 requires both index paths on a read-only model volume.
+        mkdir -p "$OLLAMA_MODELS/manifests-v2"
+        # Older volumes may also lack permissions for the inference user.
         chmod -R a+rX,go-w "$OLLAMA_MODELS"
         echo "Approved model ${APPROVED_MODEL} is already provisioned."
         exit 0
@@ -99,6 +100,13 @@ if ! /bin/ollama pull "$APPROVED_MODEL"; then
     echo "Download failed. Removing the partial download so provisioning can be retried." >&2
     remove_downloaded_files
     exit 1
+fi
+
+# Ollama's legacy manifest now records a separate index layer. Write the
+# curated manifest and verify its exact entries and downloaded blobs.
+if ! /usr/local/bin/ollama-job write-approved-manifest; then
+    remove_downloaded_files
+    exit 20
 fi
 
 set +e

@@ -57,7 +57,7 @@ func TestServeRunsReclaimsAndCompletesJobs(t *testing.T) {
 	var events bytes.Buffer
 	served := make(chan error, 1)
 	go func() {
-		served <- serve(ctx, config.Config{AllowlistPath: policy}, socket, &events, nil, log.New(io.Discard, "", 0), dashboardOpts{})
+		served <- serve(ctx, config.Config{AllowlistPath: policy}, socket, &events, nil, log.New(io.Discard, "", 0), serveOptions{})
 	}()
 
 	send := func(request control.Request) control.Response {

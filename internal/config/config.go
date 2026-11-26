@@ -24,8 +24,8 @@ const (
 // Config contains the external settings needed to wire the node agent.
 // See docs/coordinator-requirements.md §6 for defaults.
 type Config struct {
-	// CoordinatorURL enables federation. Empty means local-only: no
-	// registration or heartbeats, and gpu-ctl is the only source of work.
+	// CoordinatorURL enables federation. Empty disables coordinator
+	// registration and heartbeats.
 	CoordinatorURL string `json:"coordinator_url"`
 	// ProviderID must be stable across restarts (R2). Defaults to the hostname.
 	ProviderID string `json:"provider_id"`

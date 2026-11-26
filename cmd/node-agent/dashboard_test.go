@@ -42,11 +42,11 @@ func TestServeDashboardStatusOnLoopback(t *testing.T) {
 	defer cancel()
 	served := make(chan error, 1)
 	go func() {
-		served <- serve(ctx, config.Config{AllowlistPath: policy, ProviderID: "dash-node"}, socket, io.Discard, nil, log.New(io.Discard, "", 0), dashboardOpts{
+		served <- serve(ctx, config.Config{AllowlistPath: policy, ProviderID: "dash-node"}, socket, io.Discard, nil, log.New(io.Discard, "", 0), serveOptions{dashboard: dashboardOpts{
 			Addr:       addr,
 			WebDir:     filepath.Join(dir, "missing-web"),
 			ProviderID: "dash-node",
-		})
+		}})
 	}()
 
 	deadline := time.Now().Add(5 * time.Second)
@@ -109,9 +109,9 @@ func TestRefuseNonLoopbackDashboard(t *testing.T) {
 		t.Fatal(err)
 	}
 	socket := filepath.Join(dir, "agent", "control.sock")
-	err := serve(context.Background(), config.Config{AllowlistPath: policy}, socket, io.Discard, nil, log.New(io.Discard, "", 0), dashboardOpts{
+	err := serve(context.Background(), config.Config{AllowlistPath: policy}, socket, io.Discard, nil, log.New(io.Discard, "", 0), serveOptions{dashboard: dashboardOpts{
 		Addr: "0.0.0.0:8080",
-	})
+	}})
 	if err == nil || !strings.Contains(err.Error(), "non-loopback") {
 		t.Fatalf("err = %v, want non-loopback refusal", err)
 	}

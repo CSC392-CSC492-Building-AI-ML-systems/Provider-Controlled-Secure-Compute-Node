@@ -30,7 +30,7 @@ const (
 // Manager is the part of lease.Manager the control server drives.
 type Manager interface {
 	ReceiveOffer(ctx context.Context, offer lease.Offer) error
-	Wait(ctx context.Context) error
+	WaitForOffer(ctx context.Context, leaseID string) error
 	Drain(ctx context.Context) error
 	Resume(ctx context.Context) error
 	Reclaim(ctx context.Context) error
@@ -105,8 +105,11 @@ func (server *Server) handle(ctx context.Context, connection net.Conn) {
 		server.reply(connection, Response{Error: "malformed command: " + err.Error()})
 		return
 	}
-	if request.Command == CommandRun {
-		connection.SetDeadline(time.Now().Add(runTimeout))
+	switch request.Command {
+	case CommandRun:
+		connection.SetWriteDeadline(time.Now().Add(runTimeout))
+	case CommandReclaim:
+		connection.SetWriteDeadline(time.Now().Add(reclaimTimeout + readTimeout))
 	}
 	server.reply(connection, server.dispatch(ctx, request))
 }
@@ -195,7 +198,7 @@ func (server *Server) run(ctx context.Context, request Request) (string, error) 
 	server.jobs.Add(1)
 	go func() {
 		defer server.jobs.Done()
-		if err := server.manager.Wait(ctx); err != nil {
+		if err := server.manager.WaitForOffer(ctx, leaseID); err != nil && !errors.Is(err, lease.ErrNoActiveWorkload) {
 			server.logger.Printf("control: lease %s: %v", leaseID, err)
 		}
 	}()
