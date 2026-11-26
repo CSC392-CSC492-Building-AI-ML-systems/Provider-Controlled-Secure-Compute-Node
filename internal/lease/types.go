@@ -2,6 +2,7 @@
 package lease
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -114,6 +115,22 @@ func (request InferenceRequest) Validate() error {
 		}
 	}
 	return nil
+}
+
+// MarshalInput validates and encodes one complete Ollama request file.
+func (request InferenceRequest) MarshalInput() ([]byte, error) {
+	if err := request.Validate(); err != nil {
+		return nil, err
+	}
+	contents, err := json.Marshal(request)
+	if err != nil {
+		return nil, fmt.Errorf("encode inference request: %w", err)
+	}
+	contents = append(contents, '\n')
+	if len(contents) > MaxRequestBytes {
+		return nil, fmt.Errorf("inference request is larger than %d bytes", MaxRequestBytes)
+	}
+	return contents, nil
 }
 
 // Result is the terminal status sent to the coordinator.

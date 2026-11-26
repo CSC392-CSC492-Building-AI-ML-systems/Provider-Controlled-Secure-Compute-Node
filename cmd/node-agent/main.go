@@ -26,6 +26,7 @@ import (
 	"github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node/internal/control"
 	"github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node/internal/coordinator"
 	"github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node/internal/dashboard"
+	"github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node/internal/jobpush"
 	"github.com/CSC392-CSC492-Building-AI-ML-systems/Provider-Controlled-Secure-Compute-Node/internal/lease"
 )
 
@@ -39,7 +40,11 @@ func main() {
 	dashboardAddr := flag.String("dashboard", "", "loopback address for the live dashboard API (with -serve)")
 	webDir := flag.String("web", "web/dist", "built web app to serve with -dashboard, skipped if missing")
 	coordinatorConfig := registerCoordinatorFlags(flag.CommandLine)
+	jobPush := registerJobPushFlags(flag.CommandLine)
 	flag.Parse()
+	if err := jobPush.validate(*serveMode); err != nil {
+		log.Fatal(err)
+	}
 	if *serveMode && *interactive {
 		log.Fatal("-serve and -interactive cannot be used together")
 	}
@@ -87,13 +92,16 @@ func main() {
 		workloadOutput = os.Stderr
 	}
 	if *serveMode {
-		dash := dashboardOpts{Addr: *dashboardAddr, WebDir: *webDir, ProviderID: cfg.ProviderID}
+		opts := serveOptions{
+			dashboard: dashboardOpts{Addr: *dashboardAddr, WebDir: *webDir, ProviderID: cfg.ProviderID},
+			jobPush:   *jobPush,
+		}
 		var err error
 		if coordinatorConfig.url != "" {
-			dash.ProviderID = coordinatorConfig.providerID
-			err = serveWithHeartbeat(ctx, cfg.AllowlistPath, *socketPath, os.Stdout, workloadOutput, log.Default(), coordinatorConfig.heartbeat(), false, dash)
+			opts.dashboard.ProviderID = coordinatorConfig.providerID
+			err = serveWithHeartbeat(ctx, cfg.AllowlistPath, *socketPath, os.Stdout, workloadOutput, log.Default(), coordinatorConfig.heartbeat(), false, opts)
 		} else {
-			err = serve(ctx, cfg, *socketPath, os.Stdout, workloadOutput, log.Default(), dash)
+			err = serve(ctx, cfg, *socketPath, os.Stdout, workloadOutput, log.Default(), opts)
 		}
 		if err != nil {
 			log.Fatal(err)
@@ -108,6 +116,11 @@ func main() {
 // discover is the capability discovery serve registers with; tests replace it.
 var discover discoverFunc = discoverCapabilities
 
+type serveOptions struct {
+	dashboard dashboardOpts
+	jobPush   jobPushOptions
+}
+
 // serve runs the lease manager until ctx is cancelled, taking commands from
 // gpu-ctl on the control socket. Lease events are written to output as JSON
 // lines. Stopping the agent cancels and removes any running workload.
@@ -115,7 +128,7 @@ var discover discoverFunc = discoverCapabilities
 // When cfg names a coordinator, serve also registers and heartbeats on its
 // own goroutine (H3). The node refuses leases until registration succeeds
 // (R1), and serve fails if the node cannot register as configured.
-func serve(ctx context.Context, cfg config.Config, socketPath string, output io.Writer, workloadOutput io.Writer, logger *log.Logger, dash dashboardOpts) error {
+func serve(ctx context.Context, cfg config.Config, socketPath string, output io.Writer, workloadOutput io.Writer, logger *log.Logger, opts serveOptions) error {
 	var heartbeat *agent.Heartbeat
 	if cfg.Federated() {
 		client := coordinator.NewP16(cfg.CoordinatorURL, cfg.ProviderID, cfg.APIKey)
@@ -125,13 +138,14 @@ func serve(ctx context.Context, cfg config.Config, socketPath string, output io.
 		}
 		logger.Printf("heartbeating to %s every %s", cfg.CoordinatorURL, time.Duration(cfg.HeartbeatInterval))
 	}
-	if dash.ProviderID == "" {
-		dash.ProviderID = cfg.ProviderID
+	if opts.dashboard.ProviderID == "" {
+		opts.dashboard.ProviderID = cfg.ProviderID
 	}
-	return serveWithHeartbeat(ctx, cfg.AllowlistPath, socketPath, output, workloadOutput, logger, heartbeat, true, dash)
+	return serveWithHeartbeat(ctx, cfg.AllowlistPath, socketPath, output, workloadOutput, logger, heartbeat, true, opts)
 }
 
-func serveWithHeartbeat(ctx context.Context, path, socketPath string, output, workloadOutput io.Writer, logger *log.Logger, heartbeat *agent.Heartbeat, stopOnRegistrationFailure bool, dash dashboardOpts) error {
+func serveWithHeartbeat(ctx context.Context, path, socketPath string, output, workloadOutput io.Writer, logger *log.Logger, heartbeat *agent.Heartbeat, stopOnRegistrationFailure bool, opts serveOptions) error {
+	dash := opts.dashboard
 	if dash.Addr != "" && !isLoopbackAddr(dash.Addr) {
 		return fmt.Errorf("refusing non-loopback dashboard address %q", dash.Addr)
 	}
@@ -145,27 +159,43 @@ func serveWithHeartbeat(ctx context.Context, path, socketPath string, output, wo
 		next = &dashboard.EventReporter{Next: next, Bus: bus}
 	}
 	recorder := control.NewRecorder(next)
+	var reporter lease.Coordinator = recorder
+	var pushReporter *jobpush.Reporter
+	if opts.jobPush.addr != "" {
+		pushReporter = &jobpush.Reporter{Coordinator: recorder}
+		reporter = pushReporter
+	}
 	engine := containerengine.New(checker)
 	engine.Output = workloadOutput
-	manager := lease.NewManager(checker, engine, recorder)
+	manager := lease.NewManager(checker, engine, reporter)
+	if heartbeat != nil {
+		manager.SetCoordinatorConnected(false)
+	}
 	server := control.NewServer(manager, recorder, checker.Entries(), logger)
 
 	listener, err := control.Listen(socketPath)
 	if err != nil {
 		return err
 	}
+	defer listener.Close()
 	ctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 
 	adapter, err := startDashboard(ctx, dash, manager, checker, socketPath, bus, logger)
 	if err != nil {
-		listener.Close()
 		return err
 	}
+	stopPush, err := startJobPush(ctx, opts.jobPush, manager, checker, pushReporter, logger)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		cancel(nil)
+		stopPush()
+	}()
 
 	heartbeatDone := make(chan struct{})
 	if heartbeat != nil {
-		manager.SetCoordinatorConnected(false)
 		heartbeat.OnRegistered = func() { manager.SetCoordinatorConnected(true) }
 		heartbeat.OnLost = func() {
 			manager.SetCoordinatorConnected(false)

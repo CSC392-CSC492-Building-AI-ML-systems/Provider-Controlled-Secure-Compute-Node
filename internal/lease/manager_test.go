@@ -1143,3 +1143,69 @@ func TestCoordinatorLossRevokesLaunchAcrossRecovery(t *testing.T) {
 		t.Fatalf("killed = %t, state = %s, results = %+v", workload.killed, manager.State(), coordinator.results)
 	}
 }
+
+type reclaimGateWorkload struct {
+	killStarted chan struct{}
+	killFinish  chan struct{}
+}
+
+func (*reclaimGateWorkload) Wait(context.Context) (int, error) {
+	return 0, errors.New("wait took over a reclaiming workload")
+}
+
+func (workload *reclaimGateWorkload) Kill(ctx context.Context) error {
+	close(workload.killStarted)
+	select {
+	case <-workload.killFinish:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func TestWaitForOfferObservesEarlyReclaimAndSkipsNewLease(t *testing.T) {
+	workload := &reclaimGateWorkload{make(chan struct{}), make(chan struct{})}
+	engine := &stubContainerEngine{workload: workload}
+	coordinator := &stubCoordinator{}
+	manager := NewManager(&stubAllowlist{allowed: true}, engine, coordinator)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	offer := Offer{ID: "first", ImageDigest: "sha256:approved", ExpiresAt: time.Now().Add(time.Minute)}
+	if err := manager.ReceiveOffer(ctx, offer); err != nil {
+		t.Fatal(err)
+	}
+
+	reclaimed := make(chan error, 1)
+	go func() { reclaimed <- manager.Reclaim(ctx) }()
+	<-workload.killStarted
+	waited := make(chan error, 1)
+	go func() { waited <- manager.WaitForOffer(ctx, offer.ID) }()
+	select {
+	case err := <-waited:
+		t.Fatalf("wait returned before reclaim result: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(workload.killFinish)
+	if err := <-reclaimed; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-waited; !errors.Is(err, ErrNoActiveWorkload) {
+		t.Fatalf("wait after reclaim = %v", err)
+	}
+	if len(coordinator.results) != 1 || coordinator.results[0].Outcome != OutcomeReclaimed {
+		t.Fatalf("results = %+v, want one reclaimed result", coordinator.results)
+	}
+
+	engine.workload = &stubWorkload{}
+	previousID := offer.ID
+	offer.ID = "next"
+	if err := manager.ReceiveOffer(ctx, offer); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.WaitForOffer(ctx, previousID); !errors.Is(err, ErrNoActiveWorkload) {
+		t.Fatalf("waiting for old lease with a new lease active = %v", err)
+	}
+	if err := manager.WaitForOffer(ctx, offer.ID); err != nil {
+		t.Fatal(err)
+	}
+}

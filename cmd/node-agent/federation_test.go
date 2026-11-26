@@ -129,7 +129,7 @@ func TestServeRegistersBeforeTakingOffersThenHeartbeats(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	served := make(chan error, 1)
-	go func() { served <- serve(ctx, cfg, socket, io.Discard, nil, log.New(io.Discard, "", 0), dashboardOpts{}) }()
+	go func() { served <- serve(ctx, cfg, socket, io.Discard, nil, log.New(io.Discard, "", 0), serveOptions{}) }()
 	eventually(t, "agent to listen", func() bool {
 		_, err := control.Send(context.Background(), socket, control.Request{Command: control.CommandStatus})
 		return err == nil
@@ -182,7 +182,7 @@ func TestServeRefusesWithoutGPU(t *testing.T) {
 	}
 	cfg, socket := federatedConfig(t, srv.URL, cpuOnly)
 
-	err := serve(context.Background(), cfg, socket, io.Discard, nil, log.New(io.Discard, "", 0), dashboardOpts{})
+	err := serve(context.Background(), cfg, socket, io.Discard, nil, log.New(io.Discard, "", 0), serveOptions{})
 	if !errors.Is(err, agent.ErrNoGPU) {
 		t.Fatalf("serve() = %v, want ErrNoGPU", err)
 	}
@@ -194,7 +194,7 @@ func TestServeRefusesWithoutGPU(t *testing.T) {
 	cfg.CPUOnly = true
 	ctx, cancel := context.WithCancel(context.Background())
 	served := make(chan error, 1)
-	go func() { served <- serve(ctx, cfg, socket, io.Discard, nil, log.New(io.Discard, "", 0), dashboardOpts{}) }()
+	go func() { served <- serve(ctx, cfg, socket, io.Discard, nil, log.New(io.Discard, "", 0), serveOptions{}) }()
 	eventually(t, "cpu-only registration", func() bool {
 		var caps map[string]any
 		coord.with(func(f *fakeP16) { caps, _ = f.registered["capabilities"].(map[string]any) })
@@ -213,7 +213,7 @@ func TestServeStopsWhenRegistrationRejected(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	err := serve(ctx, cfg, socket, io.Discard, nil, log.New(io.Discard, "", 0), dashboardOpts{})
+	err := serve(ctx, cfg, socket, io.Discard, nil, log.New(io.Discard, "", 0), serveOptions{})
 	if err == nil || !strings.Contains(err.Error(), "VALIDATION_ERROR") {
 		t.Fatalf("serve() = %v, want the rejected registration", err)
 	}
@@ -238,7 +238,7 @@ func TestServeHandlesHeartbeatResults(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	served := make(chan error, 1)
-	go func() { served <- serve(ctx, cfg, socket, io.Discard, nil, log.New(io.Discard, "", 0), dashboardOpts{}) }()
+	go func() { served <- serve(ctx, cfg, socket, io.Discard, nil, log.New(io.Discard, "", 0), serveOptions{}) }()
 	defer func() {
 		cancel()
 		if err := <-served; err != nil {

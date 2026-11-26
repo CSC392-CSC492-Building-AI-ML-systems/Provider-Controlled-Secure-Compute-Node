@@ -12,6 +12,9 @@ import (
 // ErrNotImplemented marks intentionally unfinished lease behavior.
 var ErrNotImplemented = errors.New("lease behavior is not implemented")
 
+// ErrNoActiveWorkload indicates that the specified workload has already left the manager.
+var ErrNoActiveWorkload = errors.New("no active workload available to wait for")
+
 // OfferRejectedError describes a lease offer that failed validation.
 type OfferRejectedError struct {
 	Reason RejectionReason
@@ -240,10 +243,26 @@ func (manager *Manager) clearActiveLease() {
 // Wait collects the active workload's result and clears the active lease.
 // Call after ReceiveOffer succeeds. Cancellation or expiry kills the job.
 func (manager *Manager) Wait(ctx context.Context) error {
+	return manager.wait(ctx, "")
+}
+
+// WaitForOffer waits only for the named lease. If reclaim wins the race to
+// own the workload, wait for its report before returning ErrNoActiveWorkload.
+func (manager *Manager) WaitForOffer(ctx context.Context, leaseID string) error {
+	return manager.wait(ctx, leaseID)
+}
+
+func (manager *Manager) wait(ctx context.Context, leaseID string) error {
 	manager.mu.Lock()
-	if manager.workload == nil || manager.waiting {
+	for leaseID != "" && manager.activeLease != nil && manager.activeLease.ID == leaseID && manager.waitDone != nil {
+		done := manager.waitDone
 		manager.mu.Unlock()
-		return errors.New("no active workload available to wait for")
+		<-done
+		manager.mu.Lock()
+	}
+	if manager.workload == nil || manager.activeLease == nil || manager.waiting || (leaseID != "" && manager.activeLease.ID != leaseID) {
+		manager.mu.Unlock()
+		return ErrNoActiveWorkload
 	}
 	workload, active, revocation := manager.workload, *manager.activeLease, manager.revocation
 	manager.waiting = true
@@ -281,6 +300,7 @@ func (manager *Manager) Wait(ctx context.Context) error {
 		if killErr := killWorkload(workload); killErr != nil {
 			manager.mu.Lock()
 			manager.waiting = false
+			manager.waitDone = nil
 			manager.finishing = false
 			manager.mu.Unlock()
 			return errors.Join(waitErr, fmt.Errorf("terminate workload: %w", killErr))
@@ -377,7 +397,10 @@ func (manager *Manager) Reclaim(ctx context.Context) error {
 		return manager.reclaimWaited(ctx, workload, done, killDone)
 	}
 	manager.waiting = true
+	done := make(chan struct{})
+	manager.waitDone = done
 	manager.mu.Unlock()
+	defer close(done)
 
 	killCtx, killCancel := context.WithTimeout(ctx, 10*time.Second)
 	killErr := workload.Kill(killCtx)
@@ -385,6 +408,7 @@ func (manager *Manager) Reclaim(ctx context.Context) error {
 	if killErr != nil {
 		manager.mu.Lock()
 		manager.waiting = false
+		manager.waitDone = nil
 		manager.reclaimed = false
 		manager.mu.Unlock()
 		return fmt.Errorf("reclaim workload: %w", killErr)
