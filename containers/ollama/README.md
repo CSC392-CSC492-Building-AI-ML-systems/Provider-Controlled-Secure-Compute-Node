@@ -310,6 +310,57 @@ the node agent's container restrictions:
 It removes its containers and job files and exits nonzero on the first failed
 check. Set `SKIP_BUILD=1` to test an image you have already built.
 
+## Provider smoke test
+
+Run this from the repository root on a test provider with Go 1.23.4 or
+later, rootless Podman, OpenSSL, and `jq`. The test takes a pinned reference
+from a TLS registry trusted by Podman. It pulls the image, provisions or
+verifies the `ollama-models` volume, starts a temporary node agent on loopback,
+and submits a real prompt with `job-request`. It prints the matching accepted
+and completed events after checking for CPU inference, nonempty output, and
+generated tokens from `tinyllama:1.1b`. The model volume stays available for
+later runs. Run on a test provider because provisioning uses the node agent's
+shared `ollama-models` volume.
+
+```sh
+containers/ollama/provider-smoke-test.sh 'REGISTRY/REPOSITORY@sha256:DIGEST'
+```
+
+For an isolated test without a registry account, the following Bash session
+builds the image and publishes it to a temporary loopback TLS registry. It
+also requires `curl`. The registry and its certificate are removed on exit.
+
+```bash
+(
+  set -euo pipefail
+  work=$(mktemp -d)
+  registry=
+  cleanup() {
+    if [[ -n $registry ]]; then
+      podman --remote=false rm --force --ignore --volumes "$registry" >/dev/null
+    fi
+    rm -rf -- "$work"
+  }
+  trap cleanup EXIT
+  openssl req -x509 -nodes -newkey rsa:2048 -days 1 -subj /CN=127.0.0.1 \
+    -addext subjectAltName=IP:127.0.0.1 -keyout "$work/key.pem" -out "$work/cert.pem"
+  registry=$(podman --remote=false run --detach --rm --publish 127.0.0.1::5000 \
+    --volume "$work:/certs:ro,Z" \
+    --env REGISTRY_HTTP_TLS_CERTIFICATE=/certs/cert.pem \
+    --env REGISTRY_HTTP_TLS_KEY=/certs/key.pem docker.io/library/registry:2)
+  address=$(podman --remote=false port "$registry" 5000/tcp)
+  curl --fail --silent --show-error --retry 5 --retry-connrefused \
+    --cacert "$work/cert.pem" "https://$address/v2/" >/dev/null
+
+  image=localhost/provider-node-ollama:provider-smoke
+  podman --remote=false build --tag "$image" --file containers/ollama/Containerfile containers/ollama
+  repository="$address/test/provider-node-ollama"
+  export SSL_CERT_FILE="$work/cert.pem"
+  podman --remote=false push --tls-verify=true --digestfile "$work/digest" "$image" "docker://$repository:smoke"
+  containers/ollama/provider-smoke-test.sh "$repository@$(cat "$work/digest")"
+)
+```
+
 ## Publish and allowlist the image
 
 Provider nodes only run images listed by digest in their allowlist, and the

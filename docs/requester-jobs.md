@@ -66,12 +66,31 @@ arguments, mounts, devices, registries, or container logs.
 
 ## Submit an Ollama prompt
 
-On the provider, [build and publish the curated image from this revision and
-provision the approved model](../containers/ollama/README.md). Add the new
-image's pinned digest to the allowlist and add `-job-ollama-digest "$ollama_digest"` to the node
-command. The configured image and its bundled model receive all prompt jobs.
-Add `-job-require-gpu` on a provider configured for NVIDIA CDI to require
-GPU inference. Without that flag, the node does not attach the GPU.
+Copy the `Pull by` reference from the [curated image publication](../containers/ollama/README.md#publish-and-allowlist-the-image).
+On the provider, use that same reference to verify the image
+pull and provision the approved TinyLlama 1.1B model into `ollama-models`.
+Run Podman and the node agent as the same rootless user.
+
+```sh
+ollama_ref='registry.example/team/provider-node-ollama@sha256:<published digest>'
+ollama_digest=${ollama_ref##*@}
+podman --remote=false pull --tls-verify=true "$ollama_ref"
+OLLAMA_IMAGE="$ollama_ref" OLLAMA_VOLUME=ollama-models containers/ollama/provision-model.sh
+```
+
+Add the publish script's entry to the `images` array of the provider's
+allowlist. The entry's `image` is the repository before `@` and its `digest`
+is the value of `ollama_digest`. With the binaries and `NODE_JOB_TOKEN` from the setup
+above, start the provider with that same digest.
+
+```sh
+/tmp/provider-jobs/node-agent -serve -allowlist /path/to/allowlist.json \
+  -job-listen 127.0.0.1:8081 -job-ollama-digest "$ollama_digest"
+```
+
+The configured image and the model from the verified volume receive all
+prompt jobs. Add `-job-require-gpu` on a provider with NVIDIA CDI to require
+GPU inference. The example exercises CPU inference.
 
 ```sh
 /tmp/provider-jobs/job-request -prompt 'Explain what a GPU is in one sentence.' \
@@ -84,6 +103,8 @@ prompt in the command line. The terminal result contains the
 generated text and reported processor on success or structured error details
 when the container provides them. The provider's normal lease reports include
 job metadata and omit request and response text.
+
+To verify the whole flow on a test provider, run the [provider smoke test](../containers/ollama/README.md#provider-smoke-test).
 
 ## HTTP contract
 
