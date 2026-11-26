@@ -68,12 +68,12 @@ workload, thermal, or demo interrupt).
 
 1. `gpu-ctl reclaim` or dashboard **Reclaim** takes ownership of the active
    wait, force-removes the container, and reports `outcome=reclaimed`.
-2. The node returns to `idle` only after cleanup succeeds.
+2. After cleanup succeeds, the node returns to `idle` unless it is draining.
 3. A failed reclaim leaves the lease reserved so another offer cannot start.
 
 See [Provider controls — reclaim](provider-controls.md#reclaim).
 
-## Drain then idle
+## Drain until resume
 
 **Symptom:** Provider wants no new jobs but will finish the current one.
 
@@ -81,8 +81,8 @@ See [Provider controls — reclaim](provider-controls.md#reclaim).
 
 1. `gpu-ctl drain` (or dashboard **Drain**) sets state `draining`.
 2. New offers are rejected with `draining`.
-3. When the current job completes, fails, expires, or is reclaimed, the node
-   becomes `idle` while still draining until `gpu-ctl resume`.
+3. When the current job completes, fails, expires, or is reclaimed, the lease
+   is cleared and the node stays `draining` until `gpu-ctl resume`.
 
 ## Agent crash / SIGTERM
 

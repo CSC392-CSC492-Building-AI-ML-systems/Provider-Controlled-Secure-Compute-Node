@@ -455,8 +455,8 @@ func TestDrainRejectsNewOffers(t *testing.T) {
 	}
 }
 
-func TestDrainPreservesActiveWorkAndReturnsIdleAfterWait(t *testing.T) {
-	fixedNow := time.Date(2026, time.October, 19, 12, 0, 0, 0, time.UTC)
+func TestDrainPreservesActiveWorkAndRejectsOffersUntilResume(t *testing.T) {
+	ctx := context.Background()
 	workload := &controlledWorkload{}
 	coordinator := &stubCoordinator{}
 	manager := NewManager(
@@ -464,17 +464,16 @@ func TestDrainPreservesActiveWorkAndReturnsIdleAfterWait(t *testing.T) {
 		&stubContainerEngine{workload: workload},
 		coordinator,
 	)
-	manager.now = func() time.Time { return fixedNow }
 	offer := Offer{
 		ID:          "lease-1",
 		ImageDigest: "sha256:approved",
-		ExpiresAt:   fixedNow.Add(time.Minute),
+		ExpiresAt:   time.Now().Add(time.Minute),
 	}
 
-	if err := manager.ReceiveOffer(context.Background(), offer); err != nil {
+	if err := manager.ReceiveOffer(ctx, offer); err != nil {
 		t.Fatalf("ReceiveOffer() returned unexpected error: %v", err)
 	}
-	if err := manager.Drain(context.Background()); err != nil {
+	if err := manager.Drain(ctx); err != nil {
 		t.Fatalf("Drain() returned unexpected error: %v", err)
 	}
 	if manager.State() != StateDraining {
@@ -484,27 +483,42 @@ func TestDrainPreservesActiveWorkAndReturnsIdleAfterWait(t *testing.T) {
 		t.Fatal("Drain() cleared the active lease")
 	}
 
-	newOfferErr := manager.ReceiveOffer(context.Background(), Offer{
+	nextOffer := Offer{
 		ID:          "lease-2",
 		ImageDigest: "sha256:approved",
-		ExpiresAt:   fixedNow.Add(time.Minute),
-	})
+		ExpiresAt:   time.Now().Add(time.Minute),
+	}
+	newOfferErr := manager.ReceiveOffer(ctx, nextOffer)
 	var rejection *OfferRejectedError
 	if !errors.As(newOfferErr, &rejection) || rejection.Reason != RejectionDraining {
 		t.Fatalf("new offer error = %v, want draining rejection", newOfferErr)
 	}
 
-	if err := manager.Wait(context.Background()); err != nil {
+	if err := manager.Wait(ctx); err != nil {
 		t.Fatalf("Wait() returned unexpected error: %v", err)
 	}
-	if manager.State() != StateIdle {
-		t.Fatalf("State() after Wait() = %q, want %q", manager.State(), StateIdle)
+	if manager.State() != StateDraining {
+		t.Fatalf("State() after Wait() = %q, want %q", manager.State(), StateDraining)
 	}
 	if _, exists := manager.ActiveLease(); exists {
 		t.Fatal("active lease remains after Wait()")
 	}
 	if len(coordinator.results) != 1 || coordinator.results[0].Outcome != OutcomeCompleted {
 		t.Fatalf("results = %v, want one completed result", coordinator.results)
+	}
+	nextOffer.ID = "lease-3"
+	if err := manager.ReceiveOffer(ctx, nextOffer); !errors.As(err, &rejection) || rejection.Reason != RejectionDraining {
+		t.Fatalf("ReceiveOffer() after Wait() = %v, want draining rejection", err)
+	}
+	if err := manager.Resume(ctx); err != nil {
+		t.Fatalf("Resume() returned unexpected error: %v", err)
+	}
+	if manager.State() != StateIdle {
+		t.Fatalf("State() after Resume() = %q, want %q", manager.State(), StateIdle)
+	}
+	nextOffer.ID = "lease-4"
+	if err := manager.ReceiveOffer(ctx, nextOffer); err != nil {
+		t.Fatalf("ReceiveOffer() after Resume() returned unexpected error: %v", err)
 	}
 }
 
