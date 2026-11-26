@@ -19,9 +19,9 @@ if ! command -v podman >/dev/null 2>&1; then
     exit 1
 fi
 
-podman volume create --ignore "$volume" >/dev/null
+podman --remote=false volume create --ignore "$volume" >/dev/null
 
-exec podman run --rm \
+exec podman --remote=false run --rm \
     --cap-drop=ALL \
     --security-opt=no-new-privileges \
     --volume "${volume}:/models:Z" \
