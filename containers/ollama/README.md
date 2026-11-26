@@ -130,9 +130,10 @@ containers/ollama/provision-model.sh
 ```
 
 This creates the `ollama-models` volume if needed and downloads about 638 MB.
-If the pinned model is already present, the command leaves it unchanged
-except for making it readable by the inference user. If a different or
-modified model is already present, it stops without downloading anything. If
+If the pinned model is already present, the command reuses its files,
+prepares the index directory and makes the files readable by the inference
+user. If a different or modified model is present, it stops without
+downloading anything. If
 a new download fails partway or fails verification, its files are removed so
 the next provisioning run can try again.
 

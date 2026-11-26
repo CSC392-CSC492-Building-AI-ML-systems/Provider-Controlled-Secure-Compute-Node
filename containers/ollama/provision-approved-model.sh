@@ -24,8 +24,9 @@ set -e
 
 case "$status" in
     0)
-        # Volumes provisioned by older images may not be readable by the
-        # unprivileged inference user yet.
+        # Ollama 0.40 requires both index paths on a read-only model volume.
+        mkdir -p "$OLLAMA_MODELS/manifests-v2"
+        # Older volumes may also lack permissions for the inference user.
         chmod -R a+rX,go-w "$OLLAMA_MODELS"
         echo "Approved model ${APPROVED_MODEL} is already provisioned."
         exit 0

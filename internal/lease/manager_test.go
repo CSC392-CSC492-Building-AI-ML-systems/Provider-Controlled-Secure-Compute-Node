@@ -1261,3 +1261,54 @@ func TestLaunchReportsExpiredLease(t *testing.T) {
 		t.Fatalf("state=%s, want idle", manager.State())
 	}
 }
+
+type launchFailureCoordinator struct {
+	lockedCoordinator
+	publishing chan struct{}
+	resume     chan struct{}
+}
+
+func (coordinator *launchFailureCoordinator) ReportResult(ctx context.Context, result Result) error {
+	if result.Outcome == OutcomeFailed {
+		close(coordinator.publishing)
+		select {
+		case <-coordinator.resume:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return coordinator.lockedCoordinator.ReportResult(ctx, result)
+}
+
+func TestReclaimOfFailedLaunchOnlyReportsLaunchOutcome(t *testing.T) {
+	workload := &controlledWorkload{}
+	launchErr := errors.New("launch cleanup failed")
+	engine := &stubContainerEngine{workload: workload, err: launchErr}
+	coordinator := &launchFailureCoordinator{
+		publishing: make(chan struct{}),
+		resume:     make(chan struct{}),
+	}
+	manager := NewManager(&stubAllowlist{allowed: true}, engine, coordinator)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	offer := Offer{ID: "setup", ImageDigest: "sha256:approved", ExpiresAt: time.Now().Add(time.Minute)}
+	launched := make(chan error, 1)
+	go func() { launched <- manager.ReceiveOffer(ctx, offer) }()
+	select {
+	case <-coordinator.publishing:
+	case <-ctx.Done():
+		t.Fatal("launch did not start reporting its result")
+	}
+	reclaimErr := manager.Reclaim(ctx)
+	close(coordinator.resume)
+	if reclaimErr != nil {
+		t.Fatal(reclaimErr)
+	}
+	if err := <-launched; !errors.Is(err, launchErr) {
+		t.Fatalf("launch error = %v, want cleanup failure", err)
+	}
+	if !workload.killed || manager.State() != StateIdle || len(coordinator.results) != 1 ||
+		coordinator.results[0].Outcome != OutcomeFailed {
+		t.Fatalf("killed=%t state=%s results=%+v", workload.killed, manager.State(), coordinator.results)
+	}
+}

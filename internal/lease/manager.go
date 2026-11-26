@@ -35,7 +35,10 @@ type Manager struct {
 	activeLease *Active
 	workload    Workload
 	launchDone  chan struct{}
-	waiting     bool
+	// launchFailed means a result is owned by ReceiveOffer. A subsequent
+	// reclaim of its retained handle performs cleanup only.
+	launchFailed bool
+	waiting      bool
 	// waitDone is closed when the in-progress Wait returns.
 	waitDone chan struct{}
 	// finishing means Wait owns final cleanup and reporting.
@@ -111,6 +114,7 @@ func (manager *Manager) ReceiveOffer(ctx context.Context, offer Offer) error {
 	revoked := revocation.Err() != nil
 	if !revoked {
 		manager.workload = workload
+		manager.launchFailed = err != nil
 	}
 	manager.mu.Unlock()
 	if revoked {
@@ -238,6 +242,7 @@ func (manager *Manager) clearActiveLease() {
 	manager.activeLease = nil
 	manager.workload = nil
 	manager.launchDone = nil
+	manager.launchFailed = false
 	manager.waiting = false
 	manager.waitDone = nil
 	manager.finishing = false
@@ -268,7 +273,8 @@ func (manager *Manager) wait(ctx context.Context, leaseID string) error {
 		<-done
 		manager.mu.Lock()
 	}
-	if manager.workload == nil || manager.activeLease == nil || manager.waiting || (leaseID != "" && manager.activeLease.ID != leaseID) {
+	if manager.workload == nil || manager.activeLease == nil || manager.waiting ||
+		(leaseID != "" && manager.activeLease.ID != leaseID) {
 		manager.mu.Unlock()
 		return ErrNoActiveWorkload
 	}
@@ -324,12 +330,7 @@ func (manager *Manager) wait(ctx context.Context, leaseID string) error {
 	if !manager.now().Before(active.ExpiresAt) {
 		result.Outcome = OutcomeExpired
 	}
-	// Report before allowing another offer. A cancelled job context must not
-	// suppress the terminal report.
-	reportCtx, reportCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer reportCancel()
-	reportErr := manager.coordinator.ReportResult(reportCtx, result)
-	manager.clearActiveLease()
+	reportErr := manager.reportResultAndClear(result)
 	if reportErr != nil {
 		reportErr = fmt.Errorf("report lease result: %w", reportErr)
 	}
@@ -471,14 +472,24 @@ func (manager *Manager) reclaimWaited(ctx context.Context, workload Workload, do
 
 func (manager *Manager) reportReclaimed(leaseID string) error {
 	result := Result{LeaseID: leaseID, Outcome: OutcomeReclaimed}
-	reportCtx, reportCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	reportErr := manager.coordinator.ReportResult(reportCtx, result)
-	reportCancel()
-	manager.clearActiveLease()
-	if reportErr != nil {
-		return fmt.Errorf("report reclaimed lease: %w", reportErr)
+	if err := manager.reportResultAndClear(result); err != nil {
+		return fmt.Errorf("report reclaimed lease: %w", err)
 	}
 	return nil
+}
+
+func (manager *Manager) reportResultAndClear(result Result) error {
+	manager.mu.RLock()
+	launchFailed := manager.launchFailed
+	manager.mu.RUnlock()
+	defer manager.clearActiveLease()
+	if launchFailed {
+		return nil
+	}
+	// Report before allowing another offer, even if the job context has ended.
+	reportCtx, reportCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer reportCancel()
+	return manager.coordinator.ReportResult(reportCtx, result)
 }
 
 // SetCoordinatorConnected records coordinator connectivity changes. While
