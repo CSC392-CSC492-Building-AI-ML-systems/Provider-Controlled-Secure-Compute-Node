@@ -105,8 +105,11 @@ func (server *Server) handle(ctx context.Context, connection net.Conn) {
 		server.reply(connection, Response{Error: "malformed command: " + err.Error()})
 		return
 	}
-	if request.Command == CommandRun {
-		connection.SetDeadline(time.Now().Add(runTimeout))
+	switch request.Command {
+	case CommandRun:
+		connection.SetWriteDeadline(time.Now().Add(runTimeout))
+	case CommandReclaim:
+		connection.SetWriteDeadline(time.Now().Add(reclaimTimeout + readTimeout))
 	}
 	server.reply(connection, server.dispatch(ctx, request))
 }
