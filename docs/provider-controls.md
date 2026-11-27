@@ -82,7 +82,7 @@ not yet network acknowledgements from the real coordinator. See
 Drain is a graceful provider shutdown of new work:
 
 ```text
-running job → drain requested → current job finishes → idle
+running job → drain requested → current job finishes → stays draining → resume → idle
 ```
 
 Once draining begins:
@@ -91,12 +91,12 @@ Once draining begins:
 - new offers are rejected with `draining`;
 - the active lease and container are preserved;
 - normal completion, failure, or expiry reporting still occurs;
-- cleanup returns the manager to `idle`.
+- cleanup clears the active lease and keeps the manager `draining` until resume.
 
 The implementation is [`Manager.Drain`](../internal/lease/manager.go). It is
-available locally as `gpu-ctl drain`, and `gpu-ctl resume` ends a drain on an
-idle node so it accepts offers again. The `cmd/dashboard-mock`
-command uses a mock controller for its dashboard endpoints rather than this
+available locally as `gpu-ctl drain`. Use `gpu-ctl resume` to end a drain.
+If a job is still active, the node can accept offers once that job finishes.
+The `cmd/dashboard-mock` command uses a mock controller for its dashboard endpoints rather than this
 manager. The dashboard endpoint contract is described in
 [`docs/dashboard-api.md`](dashboard-api.md).
 
@@ -105,7 +105,7 @@ manager. The dashboard endpoint contract is described in
 Reclaim is an emergency provider action:
 
 ```text
-running job → reclaim requested → container removed → result=reclaimed → idle
+running job → reclaim requested → container removed → result=reclaimed
 ```
 
 The manager:
@@ -114,7 +114,7 @@ The manager:
   also manage it;
 - force-removes the workload with a bounded cleanup context;
 - reports `OutcomeReclaimed` with no exit code;
-- releases the lease and returns to `idle`.
+- releases the lease and returns to `idle` unless the node is draining.
 
 If container removal fails, the manager keeps the lease reserved and returns the
 cleanup error. This prevents the node from accepting another job while the old

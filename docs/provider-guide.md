@@ -80,8 +80,8 @@ In a second terminal, as the same user:
 
 `-for` must be a whole number of seconds between `1s` and `1h`.
 
-Reclaim stops the current job immediately. Drain refuses new work while the
-current job finishes. Resume ends drain on an idle node.
+Reclaim stops the current job immediately. Drain lets the current job finish
+and refuses new work until you run `gpu-ctl resume`.
 
 ## 5. Dashboard
 

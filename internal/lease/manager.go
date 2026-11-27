@@ -232,11 +232,13 @@ func (manager *Manager) clearActiveLease() {
 	manager.finishing = false
 	manager.reclaimed = false
 	manager.killDone = nil
-	manager.state = StateIdle
+	if manager.state != StateDraining {
+		manager.state = StateIdle
+	}
 }
 
-// Wait collects the active workload's result and releases the node for another
-// offer. Call after ReceiveOffer succeeds. Cancellation or expiry kills the job.
+// Wait collects the active workload's result and clears the active lease.
+// Call after ReceiveOffer succeeds. Cancellation or expiry kills the job.
 func (manager *Manager) Wait(ctx context.Context) error {
 	manager.mu.Lock()
 	if manager.workload == nil || manager.waiting {
